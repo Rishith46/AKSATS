@@ -1,7 +1,40 @@
+```gitignore
+# Environment variables and secrets
 .env
-storage/
-node_modules/
-__pycache__/
+.env.*
+!.env.example
+!.env.sample
+
+# Python
 .venv/
+venv/
+__pycache__/
+*.py[cod]
+
+# Node.js and Next.js
+node_modules/
 .next/
+dist/
+build/
+
+# Local data and candidate documents
+storage/
+uploads/
+resumes/
+candidate_documents/
 pgdata/
+
+# Database files and logs
+*.sqlite
+*.sqlite3
+*.db
+*.log
+
+# Local backup files
+*.bak
+
+# IDE and operating system files
+.vscode/
+.DS_Store
+Thumbs.db
+```
