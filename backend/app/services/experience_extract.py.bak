@@ -1,0 +1,111 @@
+import json
+import logging
+import re
+
+import ollama
+
+log = logging.getLogger("aks_ats.experience")
+
+MODEL = "qwen2.5:3b"
+DATE_RE = re.compile(r"^\d{4}(-\d{2})?$")
+
+PROMPT = """You extract employment history from a resume. Return ONLY JSON, no other text.
+Format: {"experiences": [{"company": str|null, "title": str|null, "start": "YYYY-MM"|"YYYY"|null, "end": "YYYY-MM"|"YYYY"|null, "is_current": bool}]}
+Rules:
+- Copy company and title exactly as written in the resume. Never invent or correct them.
+- If a value is not written in the resume, use null.
+- Use "end": null and "is_current": true only when the resume says Present or Current.
+- List jobs in the order they appear. Do not include education or projects.
+
+Resume text:
+"""
+
+
+def _clean_date(v):
+    if isinstance(v, str) and DATE_RE.match(v.strip()):
+        return v.strip()
+    return None
+
+
+def _in_text(value, text_lower):
+    return isinstance(value, str) and value.strip() and value.strip().lower() in text_lower
+
+
+MONTHS = {"jan": "01", "feb": "02", "mar": "03", "apr": "04", "may": "05", "jun": "06",
+          "jul": "07", "aug": "08", "sep": "09", "oct": "10", "nov": "11", "dec": "12"}
+PRESENT_RE = re.compile(r"\b(present|current|till date|to date|ongoing)\b", re.I)
+
+
+def _block(text: str, company: str | None, title: str | None) -> str:
+    """The few lines around where this job is written, used to verify dates."""
+    anchor = company or title
+    idx = text.lower().find(anchor.lower())
+    if idx == -1:
+        return ""
+    start = text.rfind("\n", 0, idx) + 1
+    end = idx
+    for _ in range(2):  # include the header line plus the next two lines
+        nxt = text.find("\n", end + 1)
+        if nxt == -1:
+            end = len(text)
+            break
+        end = nxt
+    return text[start:end]
+
+
+def _verify_date(value, block: str):
+    """Keep a date only as precisely as the resume wrote it."""
+    value = _clean_date(value)
+    if not value:
+        return None
+    year = value[:4]
+    if year not in block:
+        return None
+    if len(value) == 7:
+        mon = value[5:7]
+        names = [n for n, num in MONTHS.items() if num == mon]
+        month_ok = any(re.search(n + r"[a-z]*\.?,?\s+" + year, block, re.I) for n in names) \
+            or re.search(r"\b" + mon + r"[/\-]" + year, block) \
+            or re.search(year + r"[/\-]" + mon, block)
+        if not month_ok:
+            return year
+    return value
+
+
+def extract_experiences(text: str) -> list[dict]:
+    """LLM proposes, code verifies. Company, title and dates must appear in the resume text."""
+    resp = ollama.chat(
+        model=MODEL,
+        messages=[{"role": "user", "content": PROMPT + text[:6000]}],
+        format="json",
+        options={"temperature": 0, "num_ctx": 4096},
+    )
+    try:
+        data = json.loads(resp["message"]["content"])
+        items = data.get("experiences", [])
+    except (json.JSONDecodeError, AttributeError, TypeError):
+        log.warning("Model returned unparseable output")
+        return []
+
+    low = text.lower()
+    out = []
+    for it in items if isinstance(items, list) else []:
+        if not isinstance(it, dict):
+            continue
+        company = it.get("company") if _in_text(it.get("company"), low) else None
+        title = it.get("title") if _in_text(it.get("title"), low) else None
+        if company is None and title is None:
+            continue
+        company = company.strip() if company else None
+        title = title.strip() if title else None
+        block = _block(text, company, title)
+        end = _verify_date(it.get("end"), block)
+        is_current = end is None and bool(PRESENT_RE.search(block))
+        out.append({
+            "company": company,
+            "title": title,
+            "start": _verify_date(it.get("start"), block),
+            "end": end,
+            "is_current": is_current,
+        })
+    return out

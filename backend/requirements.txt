@@ -1,0 +1,13 @@
+fastapi
+uvicorn[standard]
+sqlalchemy
+alembic
+psycopg[binary]
+pydantic-settings
+pgvector
+argon2-cffi
+pyjwt
+python-multipartpdfminer.six
+python-docx
+reportlab
+ollama
