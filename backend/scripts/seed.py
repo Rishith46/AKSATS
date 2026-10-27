@@ -21,6 +21,7 @@ ADMIN_ONLY = {"user.manage", "candidate.delete", "audit.view"}
 ROLES = {
     "admin": list(PERMISSIONS),
     "recruiter": [c for c in PERMISSIONS if c not in ADMIN_ONLY],
+    "team_member": list(PERMISSIONS),
 }
 DEFAULT_WEIGHTS = {
     "required_skills": 25, "semantic_similarity": 30, "relevant_experience": 15,

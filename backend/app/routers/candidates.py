@@ -10,12 +10,15 @@ from app.models.candidates import (Candidate, CandidateExperience, CandidateSkil
                                    SkillAlias)
 from app.models.system import ActivityLog
 from app.schemas.candidates import CandidateCreate, CandidateOut, CandidateUpdate
+from app.visa import VISA_VALUES
+from app.geo import resolve_location
 
 router = APIRouter(prefix="/candidates", tags=["candidates"])
 
 TRACKED = [
     "full_name", "email", "phone", "linkedin_url", "location", "visa_status",
     "rate", "total_experience_years", "status", "current_requirement", "recruiter_id",
+    "country", "availability", "rate_unit",
 ]
 
 
@@ -55,6 +58,7 @@ def _like(s: str) -> str:
 def list_candidates(include_archived: bool = False, limit: int = 50, offset: int = 0,
                     q: str | None = None, location: str | None = None, title: str | None = None,
                     skill: list[str] = Query(default=[]), min_experience: float | None = None,
+                    visa: str | None = None,
                     db: Session = Depends(get_db),
                     user: User = Depends(require_permission("candidate.view"))):
     stmt = select(Candidate).order_by(Candidate.id.desc())
@@ -84,6 +88,10 @@ def list_candidates(include_archived: bool = False, limit: int = 50, offset: int
                                              CandidateSkill.skill_id.in_(ids)))
     if min_experience is not None:
         stmt = stmt.where(Candidate.total_experience_years >= min_experience)
+    if visa:
+        if visa not in VISA_VALUES:
+            raise HTTPException(status_code=400, detail="visa must be one of: " + ", ".join(VISA_VALUES))
+        stmt = stmt.where(Candidate.visa_status == visa)
     return db.scalars(stmt.limit(min(limit, 200)).offset(offset)).all()
 
 
@@ -98,6 +106,12 @@ def update_candidate(cid: int, body: CandidateUpdate, db: Session = Depends(get_
                      user: User = Depends(require_permission("candidate.edit"))):
     c = _get(db, cid)
     changes = body.model_dump(exclude_unset=True)
+    loc_args = {k: changes.pop(k) for k in ("city", "state", "country") if k in changes}
+    if loc_args:
+        try:
+            changes.update(resolve_location(c.location, c.country, **loc_args))
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
     fields = list(changes)
     old = _snap(c, fields)
     for k, v in changes.items():

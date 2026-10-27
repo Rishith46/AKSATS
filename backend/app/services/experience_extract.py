@@ -11,8 +11,22 @@ DATE_RE = re.compile(r"^\d{4}(-\d{2})?$")
 
 HEAD_RE = re.compile(r"^\s*(?:professional\s+|work\s+)?(?:experience|employment\s+history)\s*:?\s*$", re.I | re.M)
 END_RE = re.compile(r"^\s*(?:education|certifications?|academic\s+background)\b", re.I | re.M)
+INTERN_HEAD_RE = re.compile(
+    r"^\s*(?:internships?|internship\s+experience|summer\s+internships?|industrial\s+training|trainee(?:ship)?)\s*:?\s*$",
+    re.I | re.M)
+SECTION_END_RE = re.compile(
+    r"^\s*(?:education|certifications?|academic\s+background|projects?|technical\s+skills|skills|awards|achievements|references|publications)\b",
+    re.I | re.M)
+HEADING_ONLY_RE = re.compile(
+    r"(?:internships?|internship\s+experience|summer\s+internships?|industrial\s+training|trainee(?:ship)?|"
+    r"education|certifications?|academic\s+background|projects?|technical\s+skills|skills|awards|achievements|"
+    r"references|publications)\s*:?",
+    re.I)
 ROLE_RE = re.compile(r"\b(?:role|title|position)\s*:", re.I)
+ROLE_LINE_RE = re.compile(r"^\s*(?:role|title|position)\s*:", re.I)
+LOC_RE = re.compile(r"\(\s*location\s*:[^()]*(?:\([^()]*\))?[^()]*\)", re.I)
 BULLETS = ("-", "*", "\u2022", "\u25cf")
+MAX_BODY = 30000
 
 MON = r"(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?"
 DATE = rf"(?:{MON}\s*)?\d{{4}}"
@@ -35,25 +49,68 @@ Job header:
 """
 
 
-def split_jobs(text: str) -> list[str]:
-    """One short header per job: the date-range line plus the Role: line above it, if any."""
-    m = HEAD_RE.search(text)
-    section = text[m.end():] if m else text
-    e = END_RE.search(section)
-    if e:
-        section = section[:e.start()]
+def _blocks(section: str) -> list[tuple[str, str]]:
+    """(header, responsibilities) for every job found in a block of text."""
     lines = [ln.strip() for ln in section.splitlines() if ln.strip()]
-    headers = []
-    for i, line in enumerate(lines):
-        if len(line) > 220 or line.startswith(BULLETS) or not RANGE_RE.search(line):
-            continue
+    idx = [i for i, line in enumerate(lines)
+           if len(line) <= 220 and not line.startswith(BULLETS) and RANGE_RE.search(line)]
+    out = []
+    for n, i in enumerate(idx):
+        line = lines[i]
         parts = [line]
         if i > 0:
             ms = list(ROLE_RE.finditer(lines[i - 1]))
             if ms:
                 parts.insert(0, lines[i - 1][ms[-1].start():])
-        headers.append("\n".join(parts)[:500])
-    return headers
+        header = "\n".join(parts)[:500]
+
+        end_i = idx[n + 1] if n + 1 < len(idx) else len(lines)
+        items = []
+        rm = RANGE_RE.search(line)
+        rest = LOC_RE.sub("", line[rm.end():]).lstrip(" )(-:|,.").rstrip(" |,")
+        if len(rest) >= 20:
+            items.append(rest)
+        for k in range(i + 1, end_i):
+            ln = lines[k]
+            if k == end_i - 1 and n + 1 < len(idx):
+                cut = list(ROLE_RE.finditer(ln))
+                if cut:
+                    ln = ln[:cut[-1].start()].strip()
+            if ln.lower().startswith("environment") or HEADING_ONLY_RE.fullmatch(ln):
+                break
+            if not ln or ROLE_LINE_RE.match(ln):
+                continue
+            if ln.startswith(BULLETS) or not items:
+                items.append(ln.lstrip("-*\u2022\u25cf ").strip())
+            else:
+                items[-1] += " " + ln
+        out.append((header, "\n".join(items)[:MAX_BODY]))
+    return out
+
+
+def split_jobs_with_bodies(text: str) -> list[tuple[str, str]]:
+    """Jobs from the experience section, plus any separate Internships section, which counts
+    as experience too. Internship text that is already inside the experience section is not
+    counted twice."""
+    m = HEAD_RE.search(text)
+    section = text[m.end():] if m else text
+    e = END_RE.search(section)
+    if e:
+        section = section[:e.start()]
+    jobs = _blocks(section)
+    seen = {h for h, _ in jobs}
+    for im in INTERN_HEAD_RE.finditer(text):
+        rest = text[im.end():]
+        em = SECTION_END_RE.search(rest)
+        for h, b in _blocks(rest[:em.start()] if em else rest):
+            if h not in seen:
+                seen.add(h)
+                jobs.append((h, b))
+    return jobs
+
+
+def split_jobs(text: str) -> list[str]:
+    return [h for h, _ in split_jobs_with_bodies(text)]
 
 
 def _norm(s: str) -> str:
@@ -91,9 +148,10 @@ def _verify_date(value, block: str):
 
 
 def extract_experiences(text: str) -> list[dict]:
-    """Code finds each job header, the model reads it, code verifies against that header."""
+    """Code finds each job header and its responsibilities, the model reads the header,
+    code verifies the answer against that header."""
     out = []
-    for header in split_jobs(text)[:30]:
+    for header, body in split_jobs_with_bodies(text)[:30]:
         resp = ollama.chat(
             model=MODEL,
             messages=[{"role": "user", "content": PROMPT + header}],
@@ -119,5 +177,6 @@ def extract_experiences(text: str) -> list[dict]:
             "start": _verify_date(data.get("start"), header),
             "end": end,
             "is_current": end is None and bool(PRESENT_RE.search(header)),
+            "description": body or None,
         })
     return out

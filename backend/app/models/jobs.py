@@ -21,6 +21,7 @@ class Job(TimestampMixin, Base):
     client_id: Mapped[int | None] = mapped_column(ForeignKey("clients.id", ondelete="SET NULL"))
     description: Mapped[str | None] = mapped_column(Text)
     location: Mapped[str | None] = mapped_column(String(200))
+    location_preference: Mapped[str | None] = mapped_column(String(30))
     work_mode: Mapped[str | None] = mapped_column(String(20))  # Remote / Hybrid / Onsite
     required_experience_years: Mapped[Decimal | None] = mapped_column(Numeric(4, 1))
     visa_requirements: Mapped[str | None] = mapped_column(String(200))
@@ -82,3 +83,13 @@ class Interview(Base):
     mode: Mapped[str | None] = mapped_column(String(50))
     outcome: Mapped[str | None] = mapped_column(String(50))
     notes: Mapped[str | None] = mapped_column(Text)
+
+class JobLocation(Base):
+    """One entry of a job with the Multiple locations preference. Each has its own relocation setting."""
+    __tablename__ = "job_locations"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    job_id: Mapped[int] = mapped_column(ForeignKey("jobs.id", ondelete="CASCADE"), index=True)
+    city: Mapped[str | None] = mapped_column(String(100))
+    state: Mapped[str] = mapped_column(String(2))
+    relocation_ok: Mapped[bool] = mapped_column(Boolean)
+    position: Mapped[int] = mapped_column(Integer, server_default="0")

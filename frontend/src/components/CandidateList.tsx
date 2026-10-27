@@ -3,9 +3,10 @@
 import { useEffect, useState } from "react";
 import DocLoader from "@/components/DocLoader";
 import { listCandidatesFiltered, SessionError, type CandidateFilters, type CandidateRow } from "@/lib/api";
+import { useVisa } from "@/lib/visa";
 
 const NM = "Not Mentioned";
-const EMPTY = { q: "", location: "", title: "", skill: "", minExp: "" };
+const EMPTY = { q: "", location: "", title: "", skill: "", minExp: "", visa: "" };
 type Draft = typeof EMPTY;
 
 function toFilters(d: Draft): CandidateFilters {
@@ -13,6 +14,7 @@ function toFilters(d: Draft): CandidateFilters {
   if (d.q.trim()) f.q = d.q.trim();
   if (d.location.trim()) f.location = d.location.trim();
   if (d.title.trim()) f.title = d.title.trim();
+  if (d.visa) f.visa = d.visa;
   const skills = d.skill.split(",").map((s) => s.trim()).filter(Boolean);
   if (skills.length) f.skills = skills;
   const n = parseFloat(d.minExp);
@@ -47,6 +49,7 @@ export default function CandidateList({
   const [rows, setRows] = useState<CandidateRow[] | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const { options: visaOptions, label: visaLabel } = useVisa(token);
 
   const active = Object.values(applied).some((v) => v.trim() !== "");
 
@@ -143,6 +146,13 @@ export default function CandidateList({
           <span>Min. years</span>
           <input type="number" min="0" step="0.5" onWheel={(e) => e.currentTarget.blur()} value={draft.minExp} onChange={(e) => set("minExp", e.target.value)} placeholder="e.g. 5" />
         </label>
+        <label className="field">
+          <span>Visa status</span>
+          <select value={draft.visa} onChange={(e) => set("visa", e.target.value)}>
+            <option value="">Any</option>
+            {visaOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+          </select>
+        </label>
         <div className="filter-actions">
           <button type="submit" className="btn-dark">Search</button>
           <button type="button" className="btn-ghost" onClick={clear}>Clear</button>
@@ -181,6 +191,7 @@ export default function CandidateList({
                 <th>Candidate</th>
                 <th>Location</th>
                 <th>Experience (est.)</th>
+                <th>Visa</th>
                 <th>Status</th>
                 <th>Resume parsing</th>
                 <th>Added</th>
@@ -205,6 +216,7 @@ export default function CandidateList({
                   </td>
                   <td>{c.location ?? NM}</td>
                   <td className="whitespace-nowrap">{fmtYears(c.total_experience_years)}</td>
+                  <td>{visaLabel(c.visa_status) ?? NM}</td>
                   <td><span className="badge">{c.status}</span></td>
                   <td><span className={parseTone(c.parse_status)}>{c.parse_status}</span></td>
                   <td className="whitespace-nowrap">{fmtDate(c.created_at)}</td>

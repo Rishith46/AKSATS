@@ -3,9 +3,11 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.deps import get_db, require_permission
+from app.geo import split_location
 from app.models.access import User
 from app.models.candidates import (Candidate, CandidateDocument, CandidateExperience,
                                    CandidateSkill, Skill)
+from app.services.experience_edit import format_partial_date
 
 router = APIRouter(prefix="/candidates", tags=["profile"])
 
@@ -22,7 +24,8 @@ def get_profile(cid: int, db: Session = Depends(get_db),
                       .order_by(CandidateExperience.start_date.desc().nulls_last(),
                                 CandidateExperience.id.desc())).all()
     skills = db.execute(
-        select(Skill.name, CandidateSkill.evidence, CandidateSkill.source)
+        select(Skill.id, Skill.name, CandidateSkill.evidence, CandidateSkill.source,
+               CandidateSkill.years, CandidateSkill.last_used_year)
         .join(CandidateSkill, CandidateSkill.skill_id == Skill.id)
         .where(CandidateSkill.candidate_id == cid).order_by(Skill.name)).all()
     docs = db.scalars(select(CandidateDocument)
@@ -36,6 +39,11 @@ def get_profile(cid: int, db: Session = Depends(get_db),
         "phone": c.phone,
         "linkedin_url": c.linkedin_url,
         "location": c.location,
+        "country": c.country,
+        "availability": c.availability,
+        "rate_unit": c.rate_unit,
+        "city": split_location(c.location)[0],
+        "state": split_location(c.location)[1],
         "visa_status": c.visa_status,
         "rate": str(c.rate) if c.rate is not None else None,
         "total_experience_years": str(c.total_experience_years) if c.total_experience_years is not None else None,
@@ -45,12 +53,17 @@ def get_profile(cid: int, db: Session = Depends(get_db),
         "archived_at": c.archived_at,
         "created_at": c.created_at,
         "experiences": [{
-            "id": e.id, "company": e.company, "title": e.title,
+            "id": e.id, "company": e.company, "title": e.title, "location": e.location,
+            "description": e.description,
+            "start": format_partial_date(e.start_date, e.start_precision),
+            "end": format_partial_date(e.end_date, e.end_precision),
             "start_date": e.start_date, "start_precision": e.start_precision,
             "end_date": e.end_date, "end_precision": e.end_precision,
             "is_current": e.is_current,
         } for e in exps],
-        "skills": [{"name": n, "evidence": ev, "source": src} for n, ev, src in skills],
+        "skills": [{"skill_id": sid, "name": n, "evidence": ev, "source": src,
+                    "years": float(y) if y is not None else None, "last_used_year": ly}
+                   for sid, n, ev, src, y, ly in skills],
         "documents": [{
             "id": d.id, "kind": d.kind, "filename": d.original_filename,
             "version_no": d.version_no, "is_current": d.is_current,

@@ -2,8 +2,10 @@
 
 import { useEffect, useState } from "react";
 import CandidateNotes from "@/components/CandidateNotes";
+import CandidateEditForm from "@/components/CandidateEditForm";
 import DocLoader from "@/components/DocLoader";
 import { getProfile, SessionError, type Profile } from "@/lib/api";
+import { useVisa } from "@/lib/visa";
 
 const NM = "Not Mentioned";
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -34,6 +36,8 @@ export default function CandidateProfile({
   token, id, onBack, onSessionEnd,
 }: { token: string; id: number; onBack: () => void; onSessionEnd: () => void }) {
   const [p, setP] = useState<Profile | null>(null);
+  const { label: visaLabel } = useVisa(token);
+  const [editing, setEditing] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
@@ -62,6 +66,21 @@ export default function CandidateProfile({
     };
   }, [token, id, reloadKey, onSessionEnd]);
 
+  if (editing) {
+    return (
+      <CandidateEditForm
+        token={token}
+        id={id}
+        onSessionEnd={onSessionEnd}
+        onClose={() => {
+          setEditing(false);
+          setLoading(true);
+          setReloadKey((k) => k + 1);
+        }}
+      />
+    );
+  }
+
   return (
     <section className="glass w-full p-6 sm:p-8">
       <button className="btn-ghost" onClick={onBack}>&larr; Back to candidates</button>
@@ -84,6 +103,7 @@ export default function CandidateProfile({
               <span className="badge">{p.status}</span>
               <span className={p.parse_status === "Parsed" ? "badge" : "badge warn"}>{p.parse_status}</span>
               {p.archived_at && <span className="badge muted">Archived</span>}
+              <button className="btn-dark" onClick={() => setEditing(true)}>Edit candidate</button>
             </div>
           </div>
 
@@ -97,7 +117,7 @@ export default function CandidateProfile({
 
           <h2 className="section-title">Recruiting</h2>
           <div className="profile-grid">
-            <Field label="Work authorization" value={p.visa_status} source={p.field_sources.visa_status} />
+            <Field label="Work authorization" value={visaLabel(p.visa_status)} source={p.field_sources.visa_status} />
             <Field label="Rate" value={p.rate} source={p.field_sources.rate} />
             <Field label="Total experience (years)" value={p.total_experience_years} source={p.field_sources.total_experience_years} />
           </div>

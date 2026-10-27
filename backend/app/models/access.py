@@ -40,6 +40,7 @@ class User(TimestampMixin, Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     email: Mapped[str] = mapped_column(String(255), unique=True)
     full_name: Mapped[str] = mapped_column(String(200))
+    designation: Mapped[str | None] = mapped_column(String(50))
     password_hash: Mapped[str] = mapped_column(String(255))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

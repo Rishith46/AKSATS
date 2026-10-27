@@ -4,6 +4,7 @@ export type Me = {
   id: number;
   email: string;
   full_name: string;
+  designation: string | null;
   roles: string[];
   permissions: string[];
 };
@@ -204,7 +205,7 @@ export async function addNote(token: string, id: number, body: string): Promise<
   if (!res.ok) throw new Error("Could not save the note");
   return (await res.json()) as Note;
 }
-export type CandidateRow = Candidate & { total_experience_years: string | null };
+export type CandidateRow = Candidate & { total_experience_years: string | null; visa_status: string | null };
 
 export type CandidateFilters = {
   q?: string;
@@ -212,6 +213,7 @@ export type CandidateFilters = {
   title?: string;
   skills?: string[];
   minExperience?: number;
+  visa?: string;
 };
 
 export async function listCandidatesFiltered(
@@ -227,6 +229,7 @@ export async function listCandidatesFiltered(
   if (f.title) p.set("title", f.title);
   (f.skills ?? []).forEach((s) => p.append("skill", s));
   if (f.minExperience !== undefined) p.set("min_experience", String(f.minExperience));
+  if (f.visa) p.set("visa", f.visa);
   let res: Response;
   try {
     res = await fetch(`${API_URL}/candidates?${p.toString()}`, {
@@ -334,4 +337,16 @@ export async function getMatches(token: string, jobId: number): Promise<MatchRes
   if (res.status === 404) throw new Error("This job no longer exists");
   if (!res.ok) throw new Error("Could not load matches");
   return (await res.json()) as MatchResult;
+}
+export type VisaOption = { value: string; label: string };
+
+export async function getVisaOptions(token: string): Promise<VisaOption[]> {
+  let res: Response;
+  try {
+    res = await fetch(`${API_URL}/meta/visa-statuses`, { headers: { Authorization: `Bearer ${token}` } });
+  } catch {
+    throw new Error("Cannot reach the server");
+  }
+  if (!res.ok) throw new Error("Could not load the visa list");
+  return (await res.json()) as VisaOption[];
 }

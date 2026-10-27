@@ -1,17 +1,22 @@
 import re
 
+from app.visa import mentions
+
 STOP = {"test", "senior", "sr", "jr", "junior", "lead", "principal", "staff", "i", "ii", "iii",
         "the", "and", "of", "a"}
 STATE_RE = re.compile(r",\s*([A-Za-z]{2})\b")
 
+RECENT_YEARS = 5
+GATE_RATIO = 1.0
+
+# Starting weights written by the developer, not business rules from the client.
 DEFAULT_WEIGHTS = {
-    "required_skills": 25, "semantic_similarity": 30, "relevant_experience": 15,
-    "recent_experience": 10, "job_title": 10, "location": 5, "visa": 5,
+    "required_skills": 40, "preferred_skills": 10, "relevant_experience": 20,
+    "recent_roles": 15, "job_title": 5, "location": 5, "visa": 5,
 }
 
 NOT_SCORED = {
-    "semantic_similarity": "Not available yet: embeddings are not built",
-    "recent_experience": "Not available yet: last-used year per skill is not captured",
+    "recent_roles": "Not available yet: embeddings are not built",
 }
 
 
@@ -19,18 +24,31 @@ def _words(t):
     return {w for w in re.findall(r"[a-z0-9+#]+", (t or "").lower()) if w not in STOP}
 
 
-def title_score(job_title, titles):
+def norm_title(t):
+    return " ".join(w for w in re.findall(r"[a-z0-9+#]+", (t or "").lower()) if w not in STOP)
+
+
+def title_score(job_title, titles, mappings=None):
+    """Word overlap, or a configured relatedness for a known pair of titles, whichever is higher.
+    A mapped pair scores its relatedness, never 1: related titles are not treated as identical."""
     jw = _words(job_title)
     if not jw:
         return None, "Job title has no comparable words"
     titles = [t for t in titles if t]
     if not titles:
         return None, "No work-history titles"
-    best, best_t = 0.0, None
+    jn = norm_title(job_title)
+    best, best_t, via = 0.0, None, "words"
     for t in titles:
-        s = len(jw & _words(t)) / len(jw)
+        s, v = len(jw & _words(t)) / len(jw), "words"
+        tn = norm_title(t)
+        r = (mappings or {}).get(frozenset((jn, tn)))
+        if r is not None and tn != jn and float(r) > s:
+            s, v = float(r), "mapping"
         if s > best or best_t is None:
-            best, best_t = s, t
+            best, best_t, via = s, t, v
+    if via == "mapping":
+        return best, f"Related title: {best_t} (configured relatedness {best:g})"
     return best, f"Closest title: {best_t}"
 
 
@@ -61,10 +79,10 @@ def visa_score(job_visa, cand_visa):
         return None, "Job has no work authorization requirement"
     if not cand_visa or not cand_visa.strip():
         return None, "Candidate work authorization not mentioned"
-    if cand_visa.strip().lower() in job_visa.lower():
-        return 1.0, f"{cand_visa.strip()} is listed in the requirement"
-    return 0.0, f"{cand_visa.strip()} is not listed in the requirement"
-
+    c = cand_visa.strip()
+    if mentions(job_visa, c):
+        return 1.0, f"{c} is listed in the requirement"
+    return 0.0, f"{c} is not listed in the requirement"
 
 def experience_score(required, have):
     if required is None or float(required) <= 0:
@@ -100,3 +118,84 @@ def combine(weights, signals):
         return None, 0.0, out
     coverage = round(100 * used / total, 1) if total else 0.0
     return round(100 * acc / used), coverage, out
+
+
+def skill_status(info, min_years, this_year, recent_years):
+    """info: None, or dict with years and last_year. Returns (score, status, detail).
+    A skill seen only in a skills list, with no dated role, is weaker evidence than a dated one."""
+    if info is None:
+        return 0.0, "missing", "Not found in the resume"
+    years, last = info.get("years"), info.get("last_year")
+    if years is None or last is None:
+        return 0.5, "listed", "Listed, but not tied to any role with dates"
+    years = float(years)
+    if this_year - int(last) > recent_years:
+        return 0.4, "dated", f"Last used {last}, more than {recent_years} years ago"
+    if min_years is not None and float(min_years) > 0 and years < float(min_years):
+        s = max(min(years / float(min_years), 1.0), 0.0)
+        return s, "partial", f"{years:g} of {float(min_years):g} years, last used {last}"
+    return 1.0, "recent", f"{years:g} years, last used {last}"
+
+
+def skills_assessment(wanted, have, this_year, recent_years=RECENT_YEARS):
+    """wanted: list of (skill name, min years or None). have: skill name -> info dict.
+    Returns (score or None, summary, per-skill rows)."""
+    if not wanted:
+        return None, "Job lists none", []
+    rows = []
+    for name, mn in wanted:
+        info = have.get(name)
+        s, status, detail = skill_status(info, mn, this_year, recent_years)
+        rows.append({
+            "skill": name, "status": status, "score": round(s, 3), "detail": detail,
+            "years": float(info["years"]) if info and info.get("years") is not None else None,
+            "last_used_year": info.get("last_year") if info else None,
+            "evidence": info.get("evidence") if info else None,
+        })
+    score = sum(r["score"] for r in rows) / len(rows)
+    present = sum(1 for r in rows if r["status"] != "missing")
+    recent = sum(1 for r in rows if r["status"] in ("recent", "partial"))
+    return score, f"{present} of {len(rows)} found, {recent} used in the last {recent_years} years", rows
+
+
+def experience_gate(required, have, ratio=GATE_RATIO):
+    """Returns (blocked, reason). Blocks only when total experience is known and below the minimum.
+    The default is strict: the job's required years. Job title is never a reason to block."""
+    if required is None or float(required) <= 0:
+        return False, "Job has no required experience"
+    if have is None:
+        return False, "Candidate experience could not be calculated, so the check was not applied"
+    req = float(required)
+    need = req * ratio
+    if float(have) < need:
+        if ratio >= 1:
+            return True, f"{float(have):g} years is below the required {req:g} years"
+        return True, (f"{float(have):g} years is below the minimum of {need:g} "
+                      f"({round(ratio * 100)}% of the {req:g} required)")
+    if ratio >= 1:
+        return False, f"{float(have):g} years meets the required {req:g} years"
+    return False, f"{float(have):g} years meets the minimum of {need:g}"
+
+def recommend(score, coverage, gated, gate_reason, missing_required, weak_required):
+    """Returns (recommendation, reasons). Thresholds are starting values, not client rules."""
+    if gated:
+        return "Not recommended", [f"Experience: {gate_reason}"]
+    if score is None:
+        return "Unable to determine", ["Not enough data to score this candidate"]
+    reasons = [f"Score {score} on the signals that had data ({coverage:g}% of the weight)"]
+    if missing_required:
+        reasons.append("Missing required skills: " + ", ".join(missing_required))
+    if weak_required:
+        reasons.append("Weak or old evidence for: " + ", ".join(weak_required))
+    if score >= 80 and not missing_required:
+        level = "Strong consider"
+    elif score >= 65 and len(missing_required) <= 1:
+        level = "Consider"
+    elif score >= 45:
+        level = "Borderline"
+    else:
+        level = "Not recommended"
+    if coverage < 50 and level in ("Strong consider", "Consider"):
+        level = "Borderline"
+        reasons.append(f"Only {coverage:g}% of the scoring signals had data, so it was not rated higher")
+    return level, reasons

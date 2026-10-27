@@ -45,9 +45,8 @@ export default function AppShell() {
               <span className="who-name">{session.me.full_name}</span>
               <span className="who-mail">{session.me.email}</span>
             </div>
-            {session.me.roles.map((r) => (
-              <span key={r} className="chip">{r}</span>
-            ))}
+            <span className="chip">{session.me.designation ?? session.me.roles.join(", ")}</span>
+
             <button className="btn-ghost" onClick={endSession}>Sign out</button>
           </div>
         </div>

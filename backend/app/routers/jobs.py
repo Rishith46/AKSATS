@@ -5,9 +5,10 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.deps import get_db, require_permission
+from app.geo import split_location, state_code
 from app.models.access import User
 from app.models.candidates import Skill, SkillAlias
-from app.models.jobs import Client, Job, JobSkill
+from app.models.jobs import Client, Job, JobLocation, JobSkill
 from app.models.system import ActivityLog
 from app.schemas.jobs import STATUSES, WORK_MODES, JobCreate, JobUpdate
 
@@ -63,6 +64,39 @@ def _resolve_both(db: Session, required: list[str], preferred: list[str]):
     return req, pref
 
 
+def _clean_locations(items) -> list[dict]:
+    out, seen = [], set()
+    for i, it in enumerate(items or []):
+        st = state_code(it.state)
+        if st is None:
+            raise HTTPException(status_code=422, detail=f"Location {i + 1}: '{it.state}' is not a US state")
+        city = " ".join((it.city or "").split()) or None
+        key = ((city or "").lower(), st)
+        if key in seen:
+            raise HTTPException(status_code=422, detail=f"Location {i + 1} ({city or 'any city'}, {st}) is listed twice")
+        seen.add(key)
+        out.append({"city": city, "state": st, "relocation_ok": bool(it.relocation_ok)})
+    return out
+
+
+def _check_preference(pref, job_location, locs: list[dict]) -> None:
+    if pref is None:
+        if locs:
+            raise HTTPException(status_code=422, detail="Locations need the location preference Multiple locations")
+        return
+    if pref == "multiple":
+        if not locs:
+            raise HTTPException(status_code=422, detail="Multiple locations needs at least one location")
+        return
+    if locs:
+        raise HTTPException(status_code=422, detail="Locations are only used with the Multiple locations preference")
+    if pref == "relocation_not_ok":
+        st = split_location(job_location)[1] if job_location else None
+        if state_code(st) is None:
+            raise HTTPException(status_code=422, detail=(
+                "Relocation Not OK needs the job location to include a US state, for example Dallas, TX"))
+
+
 def _client_id(db: Session, name: str | None):
     if name is None or not name.strip():
         return None
@@ -81,12 +115,19 @@ def _skill_names(db: Session, job_id: int):
     return [n for n, r in rows if r], [n for n, r in rows if not r]
 
 
+def _locations(db: Session, job_id: int) -> list[dict]:
+    rows = db.scalars(select(JobLocation).where(JobLocation.job_id == job_id)
+                      .order_by(JobLocation.position, JobLocation.id)).all()
+    return [{"id": r.id, "city": r.city, "state": r.state, "relocation_ok": r.relocation_ok} for r in rows]
+
+
 def _out(db: Session, j: Job) -> dict:
     client = db.get(Client, j.client_id).name if j.client_id else None
     req, pref = _skill_names(db, j.id)
     return {
         "id": j.id, "title": j.title, "client": client, "description": j.description,
         "location": j.location, "work_mode": j.work_mode,
+        "location_preference": j.location_preference, "locations": _locations(db, j.id),
         "required_experience_years": str(j.required_experience_years) if j.required_experience_years is not None else None,
         "visa_requirements": j.visa_requirements,
         "rate": str(j.rate) if j.rate is not None else None,
@@ -108,13 +149,24 @@ def _log(db: Session, user: User, action: str, jid: int, old=None, new=None):
                        old_value=old, new_value=new))
 
 
+def _replace_locations(db: Session, jid: int, locs: list[dict]) -> None:
+    db.query(JobLocation).filter(JobLocation.job_id == jid).delete()
+    db.flush()
+    for i, l in enumerate(locs):
+        db.add(JobLocation(job_id=jid, city=l["city"], state=l["state"],
+                           relocation_ok=l["relocation_ok"], position=i))
+
+
 @router.post("", status_code=201)
 def create_job(body: JobCreate, db: Session = Depends(get_db),
                user: User = Depends(require_permission("job.manage"))):
     _check_enums(body.work_mode, body.status)
+    locs = _clean_locations(body.locations)
+    _check_preference(body.location_preference, body.location, locs)
     req, pref = _resolve_both(db, body.required_skills, body.preferred_skills)
     j = Job(title=body.title.strip(), client_id=_client_id(db, body.client),
             description=body.description, location=body.location, work_mode=body.work_mode,
+            location_preference=body.location_preference,
             required_experience_years=body.required_experience_years,
             visa_requirements=body.visa_requirements, rate=body.rate,
             status=body.status, owner_id=user.id)
@@ -124,9 +176,11 @@ def create_job(body: JobCreate, db: Session = Depends(get_db),
         db.add(JobSkill(job_id=j.id, skill_id=sid, is_required=True))
     for sid in pref:
         db.add(JobSkill(job_id=j.id, skill_id=sid, is_required=False))
+    _replace_locations(db, j.id, locs)
     db.flush()
     _log(db, user, "job.created", j.id,
-         new={"title": j.title, "client": body.client, "required_skills": sorted(req.values()),
+         new={"title": j.title, "client": body.client, "location_preference": j.location_preference,
+              "locations": locs, "required_skills": sorted(req.values()),
               "preferred_skills": sorted(pref.values())})
     db.commit()
     db.refresh(j)
@@ -172,6 +226,23 @@ def update_job(jid: int, body: JobUpdate, db: Session = Depends(get_db),
         old["required_skills"], old["preferred_skills"] = cur_req, cur_pref
         new["required_skills"], new["preferred_skills"] = sorted(req.values()), sorted(pref.values())
 
+    cur_locs = [{"city": l["city"], "state": l["state"], "relocation_ok": l["relocation_ok"]}
+                for l in _locations(db, jid)]
+    pref_final = changes["location_preference"] if "location_preference" in changes else j.location_preference
+    job_location_final = changes["location"] if "location" in changes else j.location
+    if "locations" in changes:
+        locs_final = _clean_locations(body.locations)
+    elif pref_final != "multiple":
+        locs_final = []
+    else:
+        locs_final = cur_locs
+    _check_preference(pref_final, job_location_final, locs_final)
+    pref_changed = pref_final != j.location_preference
+    locs_changed = locs_final != cur_locs
+    if pref_changed or locs_changed:
+        old["location_preference"], old["locations"] = j.location_preference, cur_locs
+        new["location_preference"], new["locations"] = pref_final, locs_final
+
     for k in SCALARS:
         if k in changes:
             old[k] = str(getattr(j, k)) if getattr(j, k) is not None else None
@@ -181,6 +252,11 @@ def update_job(jid: int, body: JobUpdate, db: Session = Depends(get_db),
         old["client"] = db.get(Client, j.client_id).name if j.client_id else None
         j.client_id = _client_id(db, changes["client"])
         new["client"] = changes["client"]
+
+    if pref_changed:
+        j.location_preference = pref_final
+    if locs_changed:
+        _replace_locations(db, jid, locs_final)
 
     if skills_change:
         db.query(JobSkill).filter(JobSkill.job_id == jid).delete()

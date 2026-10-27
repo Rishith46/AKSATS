@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.models.candidates import Skill, SkillAlias
 
-CASE_SENSITIVE = {"Go", "ML", "TS", "JS", "PLC", "PLCs", "CPP"}
+CASE_SENSITIVE = {"Go", "ML", "TS", "JS", "PLC", "PLCs", "CPP", "Excel", "Lean"}
 
 
 def _pattern(term: str) -> re.Pattern:

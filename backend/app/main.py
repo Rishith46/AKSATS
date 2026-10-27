@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 
 from app.db import engine
-from app.routers import auth, candidate_delete, candidates, documents, inbox, notes, parsing, profile, jobs, matching
+from app.routers import auth, candidate_delete, candidates, documents, inbox, notes, parsing, profile, jobs, matching, jd, meta, candidate_edit
 from app.services import worker
 
 logging.basicConfig(level=logging.INFO)
@@ -37,6 +37,9 @@ app.include_router(inbox.router)
 app.include_router(profile.router)
 app.include_router(jobs.router)
 app.include_router(matching.router)
+app.include_router(jd.router)
+app.include_router(meta.router)
+app.include_router(candidate_edit.router)
 
 
 @app.get("/health")

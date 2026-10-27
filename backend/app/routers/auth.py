@@ -28,6 +28,7 @@ def me(user: User = Depends(get_current_user)):
         "id": user.id,
         "email": user.email,
         "full_name": user.full_name,
+        "designation": user.designation,
         "roles": [r.name for r in user.roles],
         "permissions": sorted(user_permissions(user)),
     }

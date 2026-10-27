@@ -14,6 +14,7 @@ from app.services.experience_extract import extract_experiences
 from app.services.experience_years import years_from
 from app.services.field_extract import extract_fields
 from app.services.skill_match import find_skills, load_terms
+from app.services.skill_history import skill_history
 from app.services.text_extract import ExtractionError, extract_text
 
 log = logging.getLogger("aks_ats.parse")
@@ -64,7 +65,7 @@ def parse_document(db: Session, doc_id: int, user_id: int | None = None) -> dict
             candidate_id=cand.id, company=e["company"], title=e["title"],
             start_date=_to_date(e["start"]), end_date=_to_date(e["end"]),
             start_precision=_precision(e["start"]), end_precision=_precision(e["end"]),
-            is_current=e["is_current"]))
+            is_current=e["is_current"], description=e.get("description")))
 
     exp_years = years_from([{"start": _to_date(e["start"]), "end": _to_date(e["end"]),
                              "is_current": e["is_current"]} for e in exps])
@@ -75,6 +76,9 @@ def parse_document(db: Session, doc_id: int, user_id: int | None = None) -> dict
 
     terms = load_terms(db)
     found = find_skills(text, terms)
+    hist = skill_history([{"title": e["title"], "description": e.get("description"),
+                           "start": _to_date(e["start"]), "end": _to_date(e["end"]),
+                           "is_current": e["is_current"]} for e in exps], terms)
     db.execute(delete(CandidateSkill).where(CandidateSkill.candidate_id == cand.id,
                                             CandidateSkill.source == "extracted"))
     db.flush()
@@ -84,7 +88,10 @@ def parse_document(db: Session, doc_id: int, user_id: int | None = None) -> dict
         sk = db.scalar(select(Skill).where(Skill.name == f["skill"]))
         if sk and sk.id not in existing:
             db.add(CandidateSkill(candidate_id=cand.id, skill_id=sk.id,
-                                  evidence=f["evidence"], source="extracted"))
+                                  evidence=hist.get(f["skill"], {}).get("evidence") or f["evidence"],
+                                  years=hist.get(f["skill"], {}).get("years"),
+                                  last_used_year=hist.get(f["skill"], {}).get("last_year"),
+                                  source="extracted"))
 
     cand.field_sources = sources
     missing = [k for k in ("full_name", "email", "phone") if not getattr(cand, k)]

@@ -57,6 +57,8 @@ class Candidate(TimestampMixin, Base):
     phone: Mapped[str | None] = mapped_column(String(50), index=True)
     linkedin_url: Mapped[str | None] = mapped_column(String(500), index=True)
     location: Mapped[str | None] = mapped_column(String(200), index=True)
+    country: Mapped[str | None] = mapped_column(String(100))
+    availability: Mapped[str | None] = mapped_column(String(200))
     visa_status: Mapped[str | None] = mapped_column(String(100))
     rate: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
     rate_unit: Mapped[str | None] = mapped_column(String(20), server_default="hour")

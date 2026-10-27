@@ -6,32 +6,115 @@ import { getMatches, SessionError, type MatchCandidate, type MatchResult } from 
 
 const NM = "Not Mentioned";
 
+const PREF_LABEL: Record<string, string> = {
+  relocation_ok: "Relocation OK",
+  relocation_not_ok: "Relocation Not OK",
+  multiple: "Multiple locations",
+};
+
 const SIGNAL_LABELS: Record<string, string> = {
   required_skills: "Required skills",
-  semantic_similarity: "Semantic similarity",
+  preferred_skills: "Preferred skills",
   relevant_experience: "Relevant experience",
-  recent_experience: "Recent experience",
+  recent_roles: "Recent roles and responsibilities",
   job_title: "Job title",
   location: "Location",
   visa: "Work authorization",
 };
 
+const STATUS_TEXT: Record<string, string> = {
+  recent: "Recent",
+  partial: "Partial",
+  listed: "Listed only",
+  dated: "Older",
+  missing: "Missing",
+};
+
+type SkillRow = {
+  skill: string;
+  status: string;
+  score: number;
+  detail: string;
+  years: number | null;
+  last_used_year: number | null;
+  evidence: string | null;
+};
+
+type Rec = MatchCandidate & {
+  recommendation: string;
+  recommendation_reasons: string[];
+  experience_gate: { blocked: boolean; detail: string };
+  location_check: { status: string; detail: string };
+  required_detail: SkillRow[];
+  preferred_detail: SkillRow[];
+};
+
+type Result = Omit<MatchResult, "candidates"> & {
+  candidates: Rec[];
+  weights_source: string;
+  recent_years_window: number;
+  excluded: { candidate_id: number; full_name: string | null; reason: string; kind?: string }[];
+  location_preference: string | null;
+  locations: { city: string | null; state: string; relocation_ok: boolean }[];
+};
+
 const tidy = (s: string | null) => (s ? s.replace(/\s+/g, " ").trim() : "No evidence sentence");
 
-function Card({ c, rank, onOpen }: { c: MatchCandidate; rank: number; onOpen: (id: number) => void }) {
-  const entries = Object.entries(c.signals);
+function recClass(r: string) {
+  if (r === "Strong consider") return "rec rec-strong";
+  if (r === "Consider") return "rec rec-consider";
+  if (r === "Borderline") return "rec rec-border";
+  return "rec rec-no";
+}
+
+function chipClass(status: string, preferred: boolean) {
+  if (status === "recent") return "badge";
+  if (status === "missing") return preferred ? "badge muted" : "badge bad";
+  return "badge warn";
+}
+
+function Chips({ rows, preferred }: { rows: SkillRow[]; preferred: boolean }) {
+  if (rows.length === 0) return <span className="text-sm text-[var(--silver-600)]">The job lists none</span>;
   return (
-    <article className="match-card">
+    <div className="flex flex-wrap gap-1">
+      {rows.map((r) => (
+        <span key={r.skill} className={chipClass(r.status, preferred)} title={r.detail}>
+          {r.skill}
+          {r.status !== "recent" ? ` \u00b7 ${STATUS_TEXT[r.status] ?? r.status}` : ""}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function Card({ c, rank, onOpen }: { c: Rec; rank: number; onOpen: (id: number) => void }) {
+  const entries = Object.entries(c.signals);
+  const skillRows = [
+    ...c.required_detail.map((r) => ({ ...r, kind: "Required" })),
+    ...c.preferred_detail.map((r) => ({ ...r, kind: "Preferred" })),
+  ];
+  return (
+    <article className={"match-card" + (c.experience_gate.blocked ? " gated" : "")}>
       <div className="match-top">
         <div>
           <p className="text-xs tracking-[0.3em] uppercase text-[var(--silver-600)]">#{rank}</p>
           <button className="link-name" onClick={() => onOpen(c.candidate_id)}>{c.full_name ?? NM}</button>
-          <div className="mt-1 flex flex-wrap gap-2">
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <span className={recClass(c.recommendation)}>{c.recommendation}</span>
             <span className={c.parse_status === "Parsed" ? "badge" : "badge warn"}>{c.parse_status}</span>
+            {c.location_check.status === "unknown" && (
+              <span className="badge warn" title={c.location_check.detail}>Location unconfirmed</span>
+            )}
             {c.restrictions.map((r, i) => (
               <span key={i} className="badge bad">{r.type}{r.blocking ? " (blocking)" : ""}</span>
             ))}
           </div>
+          <ul className="reasons">
+            {c.recommendation_reasons.map((t, i) => <li key={i}>{t}</li>)}
+          </ul>
+          {c.experience_gate.blocked && (
+            <p className="mt-2 text-sm text-[#b42318]">Experience check: {c.experience_gate.detail}</p>
+          )}
         </div>
         <div className="match-score">
           <span className="match-num">{c.score_floor}</span>
@@ -45,17 +128,9 @@ function Card({ c, rank, onOpen }: { c: MatchCandidate; rank: number; onOpen: (i
 
       <div className="match-skills">
         <p className="kv-label">Required skills</p>
-        <div className="flex flex-wrap gap-1">
-          {c.matching_required.map((m) => <span key={m.skill} className="badge">{m.skill}</span>)}
-          {c.missing_required.map((m) => <span key={m} className="badge bad">Missing: {m}</span>)}
-          {c.matching_required.length + c.missing_required.length === 0 && <span className="text-sm text-[var(--silver-600)]">The job lists none</span>}
-        </div>
+        <Chips rows={c.required_detail} preferred={false} />
         <p className="kv-label mt-3">Preferred skills</p>
-        <div className="flex flex-wrap gap-1">
-          {c.matching_preferred.map((m) => <span key={m.skill} className="badge">{m.skill}</span>)}
-          {c.missing_preferred.map((m) => <span key={m} className="badge muted">Missing: {m}</span>)}
-          {c.matching_preferred.length + c.missing_preferred.length === 0 && <span className="text-sm text-[var(--silver-600)]">The job lists none</span>}
-        </div>
+        <Chips rows={c.preferred_detail} preferred={true} />
       </div>
 
       <details className="match-details">
@@ -75,12 +150,22 @@ function Card({ c, rank, onOpen }: { c: MatchCandidate; rank: number; onOpen: (i
             </tbody>
           </table>
         </div>
-        {[...c.matching_required, ...c.matching_preferred].length > 0 && (
-          <div className="mt-3 space-y-2">
-            <p className="kv-label">Where the skills appear in the resume</p>
-            {[...c.matching_required, ...c.matching_preferred].map((m) => (
-              <p key={m.skill} className="text-xs"><span className="font-semibold">{m.skill}:</span> {tidy(m.evidence)}</p>
-            ))}
+        {skillRows.length > 0 && (
+          <div className="table-wrap mt-3">
+            <table className="list">
+              <thead><tr><th>Skill</th><th>Type</th><th>Status</th><th>Detail</th><th>From the resume</th></tr></thead>
+              <tbody>
+                {skillRows.map((r) => (
+                  <tr key={r.kind + r.skill}>
+                    <td className="font-semibold">{r.skill}</td>
+                    <td>{r.kind}</td>
+                    <td>{STATUS_TEXT[r.status] ?? r.status}</td>
+                    <td className="text-sm text-[var(--silver-600)]">{r.detail}</td>
+                    <td className="text-xs">{r.status === "missing" ? "" : tidy(r.evidence)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         )}
       </details>
@@ -91,7 +176,7 @@ function Card({ c, rank, onOpen }: { c: MatchCandidate; rank: number; onOpen: (i
 export default function MatchesView({
   token, jobId, onBack, onSessionEnd, onOpenCandidate,
 }: { token: string; jobId: number; onBack: () => void; onSessionEnd: () => void; onOpenCandidate: (id: number) => void }) {
-  const [data, setData] = useState<MatchResult | null>(null);
+  const [data, setData] = useState<Result | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
@@ -100,7 +185,7 @@ export default function MatchesView({
     let cancelled = false;
     (async () => {
       try {
-        const d = await getMatches(token, jobId);
+        const d = (await getMatches(token, jobId)) as unknown as Result;
         if (cancelled) return;
         setData(d);
         setError(null);
@@ -135,6 +220,17 @@ export default function MatchesView({
           <h1 className="mt-5 text-2xl font-bold tracking-tight">Matches for {data.job_title}</h1>
           <p className="mt-2 text-sm text-[var(--silver-600)]">{data.label}</p>
           <p className="mt-1 text-xs text-[var(--silver-600)]">{data.ranking}</p>
+          <p className="mt-1 text-xs text-[var(--silver-600)]">
+            Skills count as recent if used within the last {data.recent_years_window} years. Weights: {data.weights_source}.
+          </p>
+          {data.location_preference && (
+            <p className="mt-1 text-xs text-[var(--silver-600)]">
+              Location preference: {PREF_LABEL[data.location_preference] ?? data.location_preference}
+              {data.locations.length > 0
+                ? ` (${data.locations.map((l) => `${l.city ? l.city + ", " : ""}${l.state}, ${l.relocation_ok ? "relocation OK" : "relocation not OK"}`).join("; ")})`
+                : ""}.
+            </p>
+          )}
           {data.not_scored.length > 0 && (
             <p className="mt-1 text-xs text-[#7a4a05]">
               Not scored yet: {data.not_scored.map((k) => (SIGNAL_LABELS[k] ?? k).toLowerCase()).join(", ")}.
@@ -147,6 +243,20 @@ export default function MatchesView({
               {data.candidates.map((c, i) => (
                 <Card key={c.candidate_id} c={c} rank={i + 1} onOpen={onOpenCandidate} />
               ))}
+            </div>
+          )}
+          {data.excluded && data.excluded.length > 0 && (
+            <div className="mt-8">
+              <p className="kv-label">Not eligible for this job</p>
+              <ul className="reasons">
+                {data.excluded.map((x) => (
+                  <li key={x.candidate_id}>
+                    <span className="badge muted mr-2">{x.kind === "location" ? "Location" : x.kind === "visa" ? "Visa" : "Other"}</span>
+                    <button className="underline" onClick={() => onOpenCandidate(x.candidate_id)}>{x.full_name ?? NM}</button>
+                    {": "}{x.reason}
+                  </li>
+                ))}
+              </ul>
             </div>
           )}
         </div>
