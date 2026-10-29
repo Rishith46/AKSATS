@@ -30,7 +30,7 @@ pgdata/
 *.log
 
 # Local backup files
-*.bak
+*.bak*
 
 # IDE and operating system files
 .vscode/
