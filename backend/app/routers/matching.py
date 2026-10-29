@@ -13,7 +13,7 @@ from app.models.system import MatchConfig
 from app.services.location_rules import check_location, location_signal
 from app.services.matching import (DEFAULT_WEIGHTS, GATE_RATIO, NOT_SCORED, RECENT_YEARS, combine,
                                    experience_gate, experience_score, norm_title, recommend,
-                                   skills_assessment, title_score, visa_score)
+                                   recent_roles_score, skills_assessment, title_score, visa_score)
 from app.visa import OUTSIDE_US
 
 router = APIRouter(prefix="/jobs", tags=["matching"])
@@ -52,10 +52,14 @@ def matches(jid: int, limit: int = 50, recent_years: int = Query(RECENT_YEARS, g
             .join(Skill, Skill.id == CandidateSkill.skill_id)
             .where(CandidateSkill.candidate_id.in_(ids))).all():
         have[cid][name] = {"evidence": ev, "years": yrs, "last_year": last}
-    titles: dict[int, list[str]] = {i: [] for i in ids}
-    for cid, t in db.execute(select(CandidateExperience.candidate_id, CandidateExperience.title)
-                             .where(CandidateExperience.candidate_id.in_(ids))).all():
-        titles[cid].append(t)
+    experiences: dict[int, list[CandidateExperience]] = {i: [] for i in ids}
+    for experience in db.scalars(
+            select(CandidateExperience).where(CandidateExperience.candidate_id.in_(ids))):
+        experiences[experience.candidate_id].append(experience)
+    titles = {
+        cid: [experience.title for experience in rows if experience.title]
+        for cid, rows in experiences.items()
+    }
     restr: dict[int, list[dict]] = {i: [] for i in ids}
     for r in db.scalars(select(CandidateRestriction).where(CandidateRestriction.candidate_id.in_(ids))).all():
         restr[r.candidate_id].append({"type": r.restriction_type, "blocking": r.is_blocking})
@@ -68,7 +72,8 @@ def matches(jid: int, limit: int = 50, recent_years: int = Query(RECENT_YEARS, g
     results = []
     excluded = []
     for c in cands:
-        if c.visa_status == OUTSIDE_US:
+        if c.visa_status == OUTSIDE_US and not any(
+                visa == OUTSIDE_US for visa in (job.visa_requirements or "").split(",")):
             excluded.append({"candidate_id": c.id, "full_name": c.full_name, "kind": "visa",
                              "reason": "Indian Candidate: in India, not eligible for US-based roles"})
             continue
@@ -85,6 +90,8 @@ def matches(jid: int, limit: int = 50, recent_years: int = Query(RECENT_YEARS, g
             "required_skills": (r_score, r_sum),
             "preferred_skills": (p_score, p_sum),
             "relevant_experience": experience_score(job.required_experience_years, c.total_experience_years),
+            "recent_roles": recent_roles_score(job.description, experiences[c.id],
+                                               recent_years=recent_years),
             "job_title": title_score(job.title, titles[c.id], mappings),
             "location": location_signal(job.location_preference, job.location, job.work_mode, locs, c.location),
             "visa": visa_score(job.visa_requirements, c.visa_status),

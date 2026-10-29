@@ -128,6 +128,15 @@ body {
   border-color: var(--ink); background: #fff;
   box-shadow: 0 0 0 4px rgba(167,173,181,0.35);
 }
+.password-control { position: relative; }
+.password-control input { padding-right: 4.5rem; }
+.password-toggle {
+  position: absolute; top: 50%; right: .75rem; transform: translateY(-50%);
+  padding: .3rem .4rem; border-radius: 6px; color: var(--silver-600);
+  font-size: .75rem; font-weight: 700;
+}
+.password-toggle:hover { color: var(--ink); }
+.password-toggle:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
 .form-error { min-height: 1.25rem; font-size: .85rem; color: #b42318; text-align: center; }
 .btn-dark:disabled { opacity: .45; cursor: not-allowed; transform: none; box-shadow: none; }
 .chip {
@@ -153,6 +162,8 @@ body {
 .who-text { display: flex; flex-direction: column; text-align: right; line-height: 1.15; }
 .who-name { font-weight: 600; font-size: .9rem; }
 .who-mail { font-size: .72rem; color: var(--silver-600); }
+.company-logo-header { display: block; width: 12.5rem; height: auto; flex: 0 0 auto; }
+.company-logo-login { display: block; width: min(100%, 21rem); height: auto; margin: 0 auto; }
 .btn-ghost {
   padding: .45rem .9rem; border-radius: 10px; font-size: .85rem; font-weight: 600;
   border: 1px solid var(--silver-400); background: #fff; color: var(--ink);
@@ -172,6 +183,34 @@ table.list td { padding: .9rem 1rem; border-bottom: 1px solid var(--silver-100);
 table.list tbody tr:last-child td { border-bottom: none; }
 table.list tbody tr { transition: background .2s ease; }
 table.list tbody tr:hover { background: rgba(236,238,240,0.7); }
+.candidate-status-select {
+  min-width: 13rem; padding: .5rem .65rem; border-radius: 10px;
+  background: #fff; border: 1px solid var(--silver-200); color: var(--ink);
+  font: inherit; font-size: .82rem;
+}
+.candidate-status-select:focus { outline: 2px solid var(--ink); outline-offset: 2px; }
+.candidate-status-select:disabled { opacity: .6; cursor: wait; }
+.candidate-actions { position: relative; min-width: 6rem; }
+.candidate-actions-trigger {
+  display: inline-flex; align-items: center; gap: .45rem; padding: .4rem .65rem; font-size: .78rem;
+  cursor: pointer; list-style: none; white-space: nowrap;
+}
+.candidate-actions-trigger::-webkit-details-marker { display: none; }
+.candidate-actions-trigger::after {
+  content: ""; width: .45rem; height: .45rem; margin-top: -.2rem;
+  border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; transform: rotate(45deg);
+}
+.candidate-actions[open] .candidate-actions-trigger { background: var(--ink); color: #fff; }
+.candidate-actions-menu {
+  display: flex; flex-direction: column; min-width: 8rem; margin-top: .35rem; padding: .25rem;
+  border: 1px solid var(--silver-200); border-radius: 10px; background: #fff;
+  box-shadow: 0 8px 18px -10px rgba(11,11,12,.45);
+}
+.candidate-action-item {
+  padding: .45rem .6rem; border-radius: 7px; text-align: left; font-size: .8rem; white-space: nowrap;
+}
+.candidate-action-item:hover:not(:disabled), .candidate-action-item:focus-visible { background: var(--silver-100); outline: none; }
+.candidate-action-item:disabled { opacity: .55; cursor: wait; }
 .row-in { opacity: 0; transform: translateY(8px); animation: rowin .5s cubic-bezier(.2,.7,.2,1) forwards; }
 @keyframes rowin { to { opacity: 1; transform: none; } }
 
@@ -269,6 +308,32 @@ table.list tbody tr.clickable { cursor: pointer; }
 .filter-actions { display: flex; gap: .6rem; align-items: center; }
 .filter-actions .btn-dark { padding: .7rem 1.4rem; }
 .filter-actions .btn-ghost { padding: .7rem 1rem; }
+/* ---------- admin dashboard ---------- */
+.dashboard-legend { display: flex; flex-wrap: wrap; gap: 1rem; font-size: .75rem; color: var(--silver-600); }
+.dashboard-legend span { display: inline-flex; align-items: center; gap: .4rem; }
+.dashboard-dot { width: .65rem; height: .65rem; border-radius: 50%; }
+.dashboard-dot.email, .dashboard-bar.email { background: #2563eb; }
+.dashboard-dot.upload, .dashboard-bar.upload { background: #14b8a6; }
+.dashboard-bar.jobs { background: #111827; }
+.dashboard-chart {
+  display: grid; grid-template-columns: repeat(12, minmax(30px, 1fr)); gap: .35rem;
+  min-height: 190px; margin-top: 1rem; overflow-x: auto; border-bottom: 1px solid var(--silver-200);
+}
+.dashboard-column {
+  min-width: 30px; display: grid; grid-template-rows: 1.2rem 1fr 1.4rem;
+  justify-items: center; align-items: end;
+}
+.dashboard-bar-value { font-size: .68rem; color: var(--silver-600); }
+.dashboard-bar-track {
+  width: min(100%, 28px); height: 100%; display: flex; align-items: flex-end;
+  border-radius: 6px 6px 0 0; background: rgba(236,238,240,.7);
+}
+.dashboard-bar-stack {
+  width: 100%; min-height: 0; display: flex; flex-direction: column;
+  overflow: hidden; border-radius: 6px 6px 0 0;
+}
+.dashboard-bar { display: block; width: 100%; min-height: 0; }
+.dashboard-month { align-self: center; white-space: nowrap; font-size: .62rem; color: var(--silver-600); }
 /* ---------- job form ---------- */
 .form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 1rem; }
 .form-grid .span-all { grid-column: 1 / -1; }

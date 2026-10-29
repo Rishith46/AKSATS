@@ -51,6 +51,14 @@ Phone = Annotated[str | None, AfterValidator(_phone)]
 LinkedIn = Annotated[str | None, AfterValidator(_linkedin)]
 Visa = Annotated[str | None, AfterValidator(check_visa)]
 Country = Annotated[str | None, AfterValidator(normalize_country)]
+CandidateStatus = Literal[
+    "Open",
+    "Vendor Submission",
+    "Client Submission",
+    "Vendor Interview Scheduled",
+    "Client Interview Scheduled",
+    "Rejected",
+]
 
 
 class CandidateCreate(BaseModel):
@@ -82,7 +90,7 @@ class CandidateUpdate(BaseModel):
     rate: Decimal | None = Field(default=None, ge=0, le=1_000_000)
     rate_unit: Literal["hour", "year"] | None = None
     total_experience_years: Decimal | None = Field(default=None, ge=0, le=60)
-    status: str | None = Field(default=None, max_length=50)
+    status: CandidateStatus | None = None
     current_requirement: Text = Field(default=None, max_length=300)
     availability: Text = Field(default=None, max_length=200)
     recruiter_id: int | None = None

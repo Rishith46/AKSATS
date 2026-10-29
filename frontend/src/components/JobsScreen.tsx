@@ -3,7 +3,11 @@
 import { useEffect, useState } from "react";
 import DocLoader from "@/components/DocLoader";
 import MatchesView from "@/components/MatchesView";
-import { listJobs, saveJob, SessionError, type Job } from "@/lib/api";
+import {
+  deleteJob, getSkillReviewList, listJobs, readJobDescription, reviewSkill, saveJob, SessionError,
+  type Job, type SkillReviewList,
+} from "@/lib/api";
+import { useVisa } from "@/lib/visa";
 
 const NM = "Not Mentioned";
 const MODES = ["Remote", "Hybrid", "Onsite"];
@@ -23,6 +27,8 @@ const PREF_HELP: Record<string, string> = {
 };
 
 type LocRow = { city: string; state: string; ok: boolean };
+type SkillMark = "Correct" | "Neutral" | "Wrong";
+type SkillChoice = { name: string; mark: SkillMark };
 type JobFull = Job & {
   location_preference: string | null;
   locations: { city: string | null; state: string; relocation_ok: boolean }[];
@@ -30,20 +36,20 @@ type JobFull = Job & {
 
 type Form = {
   title: string; client: string; description: string; location: string; workMode: string;
-  years: string; visa: string; rate: string; status: string; required: string; preferred: string;
+  years: string; visa: string[]; rate: string; status: string; required: string; preferred: string;
   pref: string; locs: LocRow[];
 };
 
 const BLANK: Form = {
   title: "", client: "", description: "", location: "", workMode: "",
-  years: "", visa: "", rate: "", status: "Open", required: "", preferred: "",
+  years: "", visa: [], rate: "", status: "Open", required: "", preferred: "",
   pref: "", locs: [],
 };
 
 function fromJob(j: JobFull): Form {
   return {
     title: j.title, client: j.client ?? "", description: j.description ?? "", location: j.location ?? "",
-    workMode: j.work_mode ?? "", years: j.required_experience_years ?? "", visa: j.visa_requirements ?? "",
+    workMode: j.work_mode ?? "", years: j.required_experience_years ?? "", visa: j.visa_requirements ?? [],
     rate: j.rate ?? "", status: j.status, required: j.required_skills.join(", "), preferred: j.preferred_skills.join(", "),
     pref: j.location_preference ?? "",
     locs: j.locations.map((l) => ({ city: l.city ?? "", state: l.state, ok: l.relocation_ok })),
@@ -70,7 +76,7 @@ function toPayload(f: Form): { payload?: Record<string, unknown>; error?: string
     payload: {
       title: f.title.trim(), client: orNull(f.client), description: orNull(f.description),
       location: orNull(f.location), work_mode: orNull(f.workMode), required_experience_years: years,
-      visa_requirements: orNull(f.visa), rate, status: f.status,
+      visa_requirements: f.visa, rate, status: f.status,
       required_skills: splitList(f.required), preferred_skills: splitList(f.preferred),
       location_preference: f.pref === "" ? null : f.pref,
       ...(f.pref === "multiple"
@@ -87,14 +93,66 @@ function statusTone(s: string) {
 }
 
 function JobForm({
-  initial, heading, onCancel, onSubmit,
-}: { initial: Form; heading: string; onCancel: () => void; onSubmit: (p: Record<string, unknown>) => Promise<void> }) {
+  initial, heading, token, onCancel, onSubmit, onSessionEnd,
+}: {
+  initial: Form; heading: string; token: string; onCancel: () => void;
+  onSubmit: (p: Record<string, unknown>) => Promise<void>; onSessionEnd: () => void;
+}) {
   const [f, setF] = useState<Form>(initial);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [jdText, setJdText] = useState("");
+  const [readingJD, setReadingJD] = useState(false);
+  const [jdMessage, setJdMessage] = useState<string | null>(null);
+  const [hasParsedJD, setHasParsedJD] = useState(false);
+  const [skillChoices, setSkillChoices] = useState<SkillChoice[]>([]);
+  const { options: visaOptions, error: visaError } = useVisa(token);
   const set = (k: keyof Form, v: string) => setF((p) => ({ ...p, [k]: v }));
   const setLoc = (i: number, patch: Partial<LocRow>) =>
     setF((p) => ({ ...p, locs: p.locs.map((l, n) => (n === i ? { ...l, ...patch } : l)) }));
+
+  async function fillFromJD() {
+    if (readingJD) return;
+    setReadingJD(true);
+    setError(null);
+    setJdMessage(null);
+    setHasParsedJD(false);
+    try {
+      const draft = await readJobDescription(token, jdText);
+      setHasParsedJD(true);
+      setF((p) => ({
+        ...p,
+        title: draft.title ?? p.title,
+        client: draft.client ?? p.client,
+        description: jdText,
+        location: draft.location ?? p.location,
+        workMode: draft.work_mode ?? p.workMode,
+        years: draft.required_experience_years === null ? p.years : String(draft.required_experience_years),
+        visa: draft.visa_requirements.length ? draft.visa_requirements : p.visa,
+        rate: draft.rate === null ? p.rate : String(draft.rate),
+      }));
+      const required = new Set(draft.required_skills.map((name) => name.toLowerCase()));
+      const preferred = new Set(draft.preferred_skills.map((name) => name.toLowerCase()));
+      setSkillChoices(draft.skill_suggestions.map((name) => ({
+        name,
+        mark: required.has(name.toLowerCase()) ? "Correct"
+          : preferred.has(name.toLowerCase()) ? "Neutral" : "Wrong",
+      })));
+      const details = [
+        ...draft.notes,
+        ...(draft.unrecognized.length ? [`Review unrecognized requirements: ${draft.unrecognized.join(", ")}`] : []),
+      ];
+      setJdMessage(details.length ? `Draft filled. ${details.join(" ")}` : "Draft filled. Review the fields before saving.");
+    } catch (err) {
+      if (err instanceof SessionError) {
+        onSessionEnd();
+        return;
+      }
+      setError(err instanceof Error ? err.message : "Could not read the job description");
+    } finally {
+      setReadingJD(false);
+    }
+  }
 
   async function submit() {
     if (saving) return;
@@ -118,6 +176,63 @@ function JobForm({
       <button className="btn-ghost" onClick={onCancel} type="button">&larr; Back to jobs</button>
       <h1 className="mt-5 text-2xl font-bold tracking-tight">{heading}</h1>
       <div className="mt-6">
+        {heading === "New job" && (
+          <div className="match-card mb-5">
+            <label className="field">
+              <span>Paste a job description to fill the form</span>
+              <textarea rows={5} value={jdText} onChange={(e) => setJdText(e.target.value)}
+                placeholder="Paste the full job description here" />
+            </label>
+            <button className="btn-ghost mt-3" type="button" disabled={readingJD || jdText.trim().length < 20}
+              onClick={() => void fillFromJD()}>{readingJD ? "Reading..." : "Fill fields from JD"}</button>
+            {jdMessage && <p className="mt-3 text-sm text-[var(--silver-600)]" role="status">{jdMessage}</p>}
+          </div>
+        )}
+        {heading === "New job" && hasParsedJD && (
+          <div className="match-card mb-5">
+            <h2 className="font-semibold">Review extracted skills</h2>
+            <p className="mt-1 text-sm text-[var(--silver-600)]">
+              Mark each skill: Correct adds it to Required Skills, Neutral adds it to Preferred Skills,
+              and Wrong excludes it.
+            </p>
+            {skillChoices.length === 0 ? (
+              <p className="mt-4 text-sm text-[var(--silver-600)]">
+                No skill candidates were extracted. You can still add skills manually in the fields below.
+              </p>
+            ) : (
+              <>
+                <div className="mt-4 space-y-3">
+                  {skillChoices.map(({ name, mark }, index) => (
+                    <div key={`${name}-${index}`} className="flex flex-col gap-2 border-b border-[var(--silver-200)] pb-3 sm:flex-row sm:items-center">
+                      <span className="min-w-0 flex-1 font-medium">{name}</span>
+                      <label className="field sm:w-48">
+                        <span className="sr-only">Mark {name}</span>
+                        <select value={mark} onChange={(e) => {
+                          const nextMark = e.target.value as SkillMark;
+                          setSkillChoices((previous) => previous.map((choice, i) =>
+                            i === index ? { ...choice, mark: nextMark } : choice));
+                        }}>
+                          <option value="Correct">Correct — Required</option>
+                          <option value="Neutral">Neutral — Preferred</option>
+                          <option value="Wrong">Wrong — Exclude</option>
+                        </select>
+                      </label>
+                    </div>
+                  ))}
+                </div>
+                <button className="btn-ghost mt-4" type="button" onClick={() => {
+                  setF((previous) => ({
+                    ...previous,
+                    required: skillChoices.filter((choice) => choice.mark === "Correct")
+                      .map((choice) => choice.name).join(", "),
+                    preferred: skillChoices.filter((choice) => choice.mark === "Neutral")
+                      .map((choice) => choice.name).join(", "),
+                  }));
+                }}>Apply skill choices</button>
+              </>
+            )}
+          </div>
+        )}
         <div className="form-grid">
           <label className="field span-all"><span>Job title *</span>
             <input value={f.title} onChange={(e) => set("title", e.target.value)} placeholder="e.g. Senior Java Developer" /></label>
@@ -168,12 +283,31 @@ function JobForm({
             <input type="number" min="0" step="0.5" onWheel={(e) => e.currentTarget.blur()} value={f.years} onChange={(e) => set("years", e.target.value)} placeholder="e.g. 5" /></label>
           <label className="field"><span>Rate</span>
             <input type="number" min="0" step="0.01" onWheel={(e) => e.currentTarget.blur()} value={f.rate} onChange={(e) => set("rate", e.target.value)} placeholder="e.g. 70" /></label>
-          <label className="field span-all"><span>Visa requirements</span>
-            <input value={f.visa} onChange={(e) => set("visa", e.target.value)} placeholder="e.g. USC, GC, GC-EAD" /></label>
+          <fieldset className="span-all min-w-0 border-0 p-0">
+            <legend className="mb-2 text-xs tracking-[0.18em] uppercase text-[var(--silver-600)]">Visa requirements</legend>
+            {visaError && <p className="form-error mb-2" role="alert">{visaError}</p>}
+            <div className="mt-2 flex flex-wrap gap-x-5 gap-y-2">
+              {visaOptions.map((option) => (
+                <label key={option.value} className="flex items-center gap-2 text-sm">
+                  <input type="checkbox" checked={f.visa.includes(option.value)}
+                    onChange={(e) => setF((p) => ({
+                      ...p,
+                      visa: e.target.checked
+                        ? [...p.visa, option.value]
+                        : p.visa.filter((value) => value !== option.value),
+                    }))} />
+                  {option.label}
+                </label>
+              ))}
+            </div>
+          </fieldset>
           <label className="field span-all"><span>Required skills (comma separated)</span>
             <input value={f.required} onChange={(e) => set("required", e.target.value)} placeholder="e.g. Java, Spring Boot, AWS" /></label>
           <label className="field span-all"><span>Preferred skills (comma separated)</span>
             <input value={f.preferred} onChange={(e) => set("preferred", e.target.value)} placeholder="e.g. Docker, Kubernetes" /></label>
+          <p className="span-all text-xs text-[var(--silver-600)]">
+            Skills not already in the catalog are added to the skill review queue when you save.
+          </p>
           <label className="field span-all"><span>Description</span>
             <textarea rows={6} value={f.description} onChange={(e) => set("description", e.target.value)} placeholder="Paste the job description" /></label>
         </div>
@@ -188,14 +322,23 @@ function JobForm({
 }
 
 export default function JobsScreen({
-  token, onSessionEnd, onOpenCandidate,
-}: { token: string; onSessionEnd: () => void; onOpenCandidate: (id: number) => void }) {
+  token, onSessionEnd, canManageJobs, canDeleteJobs, onOpenCandidate,
+}: {
+  token: string; onSessionEnd: () => void; canManageJobs: boolean; canDeleteJobs: boolean;
+  onOpenCandidate: (id: number) => void;
+}) {
   const [jobs, setJobs] = useState<JobFull[] | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<number | null>(null);
   const [editing, setEditing] = useState<JobFull | "new" | null>(null);
   const [matchJob, setMatchJob] = useState<JobFull | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
+  const [reviewOpen, setReviewOpen] = useState(false);
+  const [skillReview, setSkillReview] = useState<SkillReviewList | null>(null);
+  const [reviewLoading, setReviewLoading] = useState(false);
+  const [reviewError, setReviewError] = useState<string | null>(null);
+  const [mergeTargets, setMergeTargets] = useState<Record<number, number | "">>({});
 
   useEffect(() => {
     let cancelled = false;
@@ -221,6 +364,36 @@ export default function JobsScreen({
     };
   }, [token, reloadKey, onSessionEnd]);
 
+  async function loadSkillReview() {
+    setReviewLoading(true);
+    setReviewError(null);
+    try {
+      setSkillReview(await getSkillReviewList(token));
+    } catch (err) {
+      if (err instanceof SessionError) {
+        onSessionEnd();
+        return;
+      }
+      setReviewError(err instanceof Error ? err.message : "Could not load skills for review");
+    } finally {
+      setReviewLoading(false);
+    }
+  }
+
+  async function handleSkillReview(skillId: number, canonicalSkillId: number | null) {
+    setReviewError(null);
+    try {
+      await reviewSkill(token, skillId, canonicalSkillId);
+      await loadSkillReview();
+    } catch (err) {
+      if (err instanceof SessionError) {
+        onSessionEnd();
+        return;
+      }
+      setReviewError(err instanceof Error ? err.message : "Could not review this skill");
+    }
+  }
+
   async function handleSave(payload: Record<string, unknown>) {
     try {
       await saveJob(token, editing === "new" || editing === null ? null : editing.id, payload);
@@ -234,6 +407,26 @@ export default function JobsScreen({
     setEditing(null);
     setLoading(true);
     setReloadKey((k) => k + 1);
+    if (reviewOpen) void loadSkillReview();
+  }
+
+  async function handleDelete(job: JobFull) {
+    if (!window.confirm(`Permanently delete "${job.title}" and its submissions/interviews?`)) return;
+    setDeletingId(job.id);
+    setError(null);
+    try {
+      await deleteJob(token, job.id);
+      setLoading(true);
+      setReloadKey((key) => key + 1);
+    } catch (err) {
+      if (err instanceof SessionError) {
+        onSessionEnd();
+        return;
+      }
+      setError(err instanceof Error ? err.message : "Could not delete the job");
+    } finally {
+      setDeletingId(null);
+    }
   }
 
   if (matchJob !== null) {
@@ -249,6 +442,8 @@ export default function JobsScreen({
           heading={editing === "new" ? "New job" : "Edit job"}
           onCancel={() => setEditing(null)}
           onSubmit={handleSave}
+          token={token}
+          onSessionEnd={onSessionEnd}
         />
       </section>
     );
@@ -265,8 +460,68 @@ export default function JobsScreen({
             </p>
           )}
         </div>
-        <button className="btn-dark" onClick={() => setEditing("new")}>New job</button>
+        {canManageJobs && <button className="btn-dark" onClick={() => setEditing("new")}>New job</button>}
       </div>
+
+      {canManageJobs && <div className="mb-5">
+        <button
+          className="btn-ghost"
+          onClick={() => {
+            const opening = !reviewOpen;
+            setReviewOpen(opening);
+            if (opening) void loadSkillReview();
+          }}
+          aria-expanded={reviewOpen}
+        >
+          {reviewOpen ? "Hide skill review" : "Review new skills"}
+        </button>
+        {reviewOpen && (
+          <div className="match-card mt-3">
+            <h2 className="font-semibold">New skills to review</h2>
+            <p className="mt-1 text-sm text-[var(--silver-600)]">
+              Approve a skill to keep it as a separate catalog entry, or merge it into an existing skill.
+            </p>
+            {reviewLoading ? (
+              <div className="py-6 flex justify-center"><DocLoader label="Loading skills for review" /></div>
+            ) : reviewError ? (
+              <p className="form-error mt-3" role="alert">{reviewError}</p>
+            ) : skillReview?.pending.length === 0 ? (
+              <p className="mt-3 text-sm text-[var(--silver-600)]">No skills are waiting for review.</p>
+            ) : skillReview && (
+              <div className="mt-4 space-y-3">
+                {skillReview.pending.map((skill) => (
+                  <div key={skill.id} className="flex flex-col gap-3 border-b border-[var(--silver-200)] pb-3 sm:flex-row sm:items-center">
+                    <span className="min-w-32 font-medium">{skill.name}</span>
+                    <button className="btn-ghost" onClick={() => void handleSkillReview(skill.id, null)}>
+                      Approve as new skill
+                    </button>
+                    <select
+                      className="min-w-0 flex-1"
+                      aria-label={`Merge ${skill.name} into`}
+                      value={mergeTargets[skill.id] ?? ""}
+                      onChange={(e) => setMergeTargets((old) => ({
+                        ...old, [skill.id]: e.target.value === "" ? "" : Number(e.target.value),
+                      }))}
+                    >
+                      <option value="">Select existing skill to merge</option>
+                      {skillReview.approved.map((target) => (
+                        <option key={target.id} value={target.id}>{target.name}</option>
+                      ))}
+                    </select>
+                    <button
+                      className="btn-ghost"
+                      disabled={!mergeTargets[skill.id]}
+                      onClick={() => void handleSkillReview(skill.id, mergeTargets[skill.id] || null)}
+                    >
+                      Merge
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </div>}
 
       {loading ? (
         <div className="py-16 flex justify-center"><DocLoader label="Loading jobs" /></div>
@@ -332,6 +587,15 @@ export default function JobsScreen({
                   </td>
                   <td>
                     <button className="btn-ghost" onClick={(e) => { e.stopPropagation(); setMatchJob(j); }}>Matches</button>
+                    {canDeleteJobs && (
+                      <button
+                        className="btn-ghost ml-2"
+                        disabled={deletingId === j.id}
+                        onClick={(e) => { e.stopPropagation(); void handleDelete(j); }}
+                      >
+                        {deletingId === j.id ? "Deleting..." : "Delete"}
+                      </button>
+                    )}
                   </td>
                 </tr>
               ))}

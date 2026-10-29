@@ -11,6 +11,7 @@ from app.config import settings
 from app.deps import get_db, require_permission
 from app.models.access import User
 from app.models.system import ActivityLog, ResumeIngestion
+from app.services.gmail_inbox import is_configured
 
 log = logging.getLogger("aks_ats.inbox")
 
@@ -86,8 +87,9 @@ def list_inbox(limit: int = 100, db: Session = Depends(get_db),
     return {
         "total": sum(counts.values()),
         "by_status": counts,
+        "email_polling": is_configured(),
         "items": [{
-            "id": r.id, "filename": r.original_filename, "status": r.status,
+            "id": r.id, "source": r.source, "filename": r.original_filename, "status": r.status,
             "issues": r.issues, "candidate_id": r.candidate_id,
             "received_at": r.received_at, "processed_at": r.processed_at,
         } for r in rows],

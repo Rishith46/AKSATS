@@ -6,18 +6,24 @@ import { getVisaOptions, type VisaOption } from "@/lib/api";
 // One place that loads the visa list from the API, so every screen shows the same labels.
 export function useVisa(token: string) {
   const [options, setOptions] = useState<VisaOption[]>([]);
+  const [error, setError] = useState<string | null>(null);
   useEffect(() => {
     let cancelled = false;
     getVisaOptions(token)
       .then((o) => {
-        if (!cancelled) setOptions(o);
+        if (!cancelled) {
+          setOptions(o);
+          setError(null);
+        }
       })
-      .catch(() => {});
+      .catch((err: unknown) => {
+        if (!cancelled) setError(err instanceof Error ? err.message : "Could not load the visa list");
+      });
     return () => {
       cancelled = true;
     };
   }, [token]);
   const label = (v: string | null | undefined): string | null =>
     v ? (options.find((o) => o.value === v)?.label ?? v) : null;
-  return { options, label };
+  return { options, label, error };
 }

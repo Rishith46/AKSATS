@@ -24,7 +24,10 @@ export type FullProfile = {
   rate_unit: string | null;
   total_experience_years: string | null;
   field_sources: Record<string, string>;
-  skills: { skill_id: number; name: string; source: string; years: number | null; last_used_year: number | null }[];
+  skills: {
+    skill_id: number; name: string; source: string; years: number | null;
+    last_used_year: number | null; evidence: string | null;
+  }[];
   experiences: {
     id: number;
     company: string | null;
@@ -37,7 +40,10 @@ export type FullProfile = {
   }[];
 };
 
-export type SkillOut = { skill_id: number; name: string; years: number | null; last_used_year: number | null; source: string; created: boolean };
+export type SkillOut = {
+  skill_id: number; name: string; years: number | null; last_used_year: number | null;
+  source: string; evidence: string | null; created: boolean;
+};
 export type ExpResult = { total_experience_years: string | null };
 
 function messageOf(detail: unknown): string {

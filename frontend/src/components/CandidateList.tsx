@@ -2,7 +2,11 @@
 
 import { useEffect, useState } from "react";
 import DocLoader from "@/components/DocLoader";
-import { listCandidatesFiltered, SessionError, type CandidateFilters, type CandidateRow } from "@/lib/api";
+import {
+  archiveCandidate, CANDIDATE_STATUSES, deleteCandidate, listCandidatesFiltered,
+  restoreCandidate, SessionError, type CandidateFilters, type CandidateRow,
+} from "@/lib/api";
+import { patchCandidate } from "@/lib/edit";
 import { useVisa } from "@/lib/visa";
 
 const NM = "Not Mentioned";
@@ -33,22 +37,28 @@ function fmtYears(v: string | null) {
   return isNaN(n) ? NM : `${n} yrs`;
 }
 
-function parseTone(s: string) {
-  if (s === "Parsed") return "badge";
-  if (s.startsWith("Possible Duplicate") || s === "Needs Review") return "badge warn";
-  return "badge muted";
-}
-
 export default function CandidateList({
-  token, onSessionEnd, onOpen,
-}: { token: string; onSessionEnd: () => void; onOpen: (id: number) => void }) {
-  const [includeArchived, setIncludeArchived] = useState(false);
+  token, onSessionEnd, canEdit, canArchive, canDelete, onOpen,
+}: {
+  token: string;
+  onSessionEnd: () => void;
+  canEdit: boolean;
+  canArchive: boolean;
+  canDelete: boolean;
+  onOpen: (id: number, edit?: boolean) => void;
+}) {
+  const [archivedOnly, setArchivedOnly] = useState(false);
   const [draft, setDraft] = useState<Draft>(EMPTY);
   const [applied, setApplied] = useState<Draft>(EMPTY);
   const [reloadKey, setReloadKey] = useState(0);
   const [rows, setRows] = useState<CandidateRow[] | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<number | null>(null);
+  const [archiveActionId, setArchiveActionId] = useState<number | null>(null);
+  const [actionMessage, setActionMessage] = useState<string | null>(null);
+  const [updatingStatusId, setUpdatingStatusId] = useState<number | null>(null);
+  const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const { options: visaOptions, label: visaLabel } = useVisa(token);
 
   const active = Object.values(applied).some((v) => v.trim() !== "");
@@ -57,7 +67,7 @@ export default function CandidateList({
     let cancelled = false;
     (async () => {
       try {
-        const data = await listCandidatesFiltered(token, includeArchived, toFilters(applied));
+        const data = await listCandidatesFiltered(token, archivedOnly, toFilters(applied));
         if (cancelled) return;
         setRows(data);
         setError(null);
@@ -75,7 +85,7 @@ export default function CandidateList({
     return () => {
       cancelled = true;
     };
-  }, [token, includeArchived, applied, reloadKey, onSessionEnd]);
+  }, [token, archivedOnly, applied, reloadKey, onSessionEnd]);
 
   function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -91,16 +101,93 @@ export default function CandidateList({
     setError(null);
   }
 
-  function toggleArchived() {
+  function switchArchiveView(showArchived: boolean) {
+    if (showArchived === archivedOnly) return;
     setLoading(true);
     setError(null);
-    setIncludeArchived((v) => !v);
+    setActionMessage(null);
+    setArchivedOnly(showArchived);
   }
 
   function retry() {
     setLoading(true);
     setError(null);
     setReloadKey((k) => k + 1);
+  }
+
+  async function removeCandidate(candidate: CandidateRow) {
+    const confirmationName = candidate.full_name ?? "DELETE";
+    if (!window.confirm(
+      `Permanently delete ${candidate.full_name ?? "this candidate"}, their resume files, notes, and submission history?`
+    )) return;
+    setDeletingId(candidate.id);
+    setError(null);
+    try {
+      await deleteCandidate(token, candidate.id, confirmationName);
+      setLoading(true);
+      setReloadKey((key) => key + 1);
+    } catch (err) {
+      if (err instanceof SessionError) {
+        onSessionEnd();
+        return;
+      }
+      setError(err instanceof Error ? err.message : "Could not delete the candidate");
+    } finally {
+      setDeletingId(null);
+    }
+  }
+
+  async function changeArchiveState(candidate: CandidateRow) {
+    const restoring = archivedOnly;
+    const verb = restoring ? "restore" : "archive";
+    if (!restoring && !window.confirm(`Archive ${candidate.full_name ?? "this candidate"}? You can restore them from the Archived tab.`)) {
+      return;
+    }
+    setArchiveActionId(candidate.id);
+    setError(null);
+    setActionMessage(null);
+    try {
+      if (restoring) {
+        await restoreCandidate(token, candidate.id);
+      } else {
+        await archiveCandidate(token, candidate.id);
+      }
+      setRows((current) => current?.filter((row) => row.id !== candidate.id) ?? null);
+      setActionMessage(
+        restoring
+          ? `${candidate.full_name ?? "Candidate"} restored to Candidates.`
+          : `${candidate.full_name ?? "Candidate"} moved to Archived.`
+      );
+    } catch (err) {
+      if (err instanceof SessionError) {
+        onSessionEnd();
+        return;
+      }
+      setError(err instanceof Error ? err.message : `Could not ${verb} the candidate.`);
+    } finally {
+      setArchiveActionId(null);
+    }
+  }
+
+  async function changeStatus(candidate: CandidateRow, status: string) {
+    if (status === candidate.status || updatingStatusId !== null) return;
+    setUpdatingStatusId(candidate.id);
+    setStatusMessage(null);
+    try {
+      await patchCandidate(token, candidate.id, { status });
+      setRows((current) => current?.map((row) =>
+        row.id === candidate.id ? { ...row, status } : row
+      ) ?? null);
+      setStatusMessage(`${candidate.full_name ?? "Candidate"} status updated to ${status}.`);
+    } catch (err) {
+      if (err instanceof SessionError) {
+        onSessionEnd();
+        return;
+      }
+      setStatusMessage(err instanceof Error ? err.message : "Could not update candidate status.");
+    } finally {
+      setUpdatingStatusId(null);
+    }
   }
 
   function set(k: keyof Draft, v: string) {
@@ -111,18 +198,21 @@ export default function CandidateList({
     <section className="glass w-full p-6 sm:p-8">
       <div className="list-head">
         <div>
-          <p className="text-xs tracking-[0.4em] uppercase text-[var(--silver-600)]">Candidates</p>
+          <p className="text-xs tracking-[0.4em] uppercase text-[var(--silver-600)]">
+            {archivedOnly ? "Archived candidates" : "Candidates"}
+          </p>
           {!loading && !error && rows && (
             <p className="mt-1 text-sm text-[var(--silver-600)]">
               {rows.length === 0 ? "No candidates to show" : `Showing ${rows.length} ${rows.length === 1 ? "candidate" : "candidates"}`}
             </p>
           )}
         </div>
-        <label className="switch">
-          <input type="checkbox" checked={includeArchived} onChange={toggleArchived} />
-          <span className="track"><span className="knob" /></span>
-          <span className="switch-label">Include archived</span>
-        </label>
+        <div className="tabs" aria-label="Candidate views">
+          <button type="button" className={"tab" + (!archivedOnly ? " on" : "")}
+            aria-pressed={!archivedOnly} onClick={() => switchArchiveView(false)}>Candidates</button>
+          <button type="button" className={"tab" + (archivedOnly ? " on" : "")}
+            aria-pressed={archivedOnly} onClick={() => switchArchiveView(true)}>Archived</button>
+        </div>
       </div>
 
       <form className="filters" onSubmit={submit}>
@@ -192,9 +282,9 @@ export default function CandidateList({
                 <th>Location</th>
                 <th>Experience (est.)</th>
                 <th>Visa</th>
-                <th>Status</th>
-                <th>Resume parsing</th>
+                <th>Recruiting status</th>
                 <th>Added</th>
+                {(canEdit || canArchive || canDelete) && <th>Actions</th>}
               </tr>
             </thead>
             <tbody>
@@ -217,15 +307,72 @@ export default function CandidateList({
                   <td>{c.location ?? NM}</td>
                   <td className="whitespace-nowrap">{fmtYears(c.total_experience_years)}</td>
                   <td>{visaLabel(c.visa_status) ?? NM}</td>
-                  <td><span className="badge">{c.status}</span></td>
-                  <td><span className={parseTone(c.parse_status)}>{c.parse_status}</span></td>
+                  <td>
+                    {canEdit ? (
+                      <select
+                        className="candidate-status-select"
+                        aria-label={`Recruiting status for ${c.full_name ?? "candidate"}`}
+                        value={CANDIDATE_STATUSES.some((status) => status === c.status) ? c.status : ""}
+                        disabled={updatingStatusId !== null}
+                        onClick={(event) => event.stopPropagation()}
+                        onKeyDown={(event) => event.stopPropagation()}
+                        onChange={(event) => void changeStatus(c, event.target.value)}
+                      >
+                        {!CANDIDATE_STATUSES.some((status) => status === c.status) && (
+                          <option value="">{c.status} (choose status)</option>
+                        )}
+                        {CANDIDATE_STATUSES.map((status) => (
+                          <option key={status} value={status}>{status}</option>
+                        ))}
+                      </select>
+                    ) : <span className="badge">{c.status}</span>}
+                  </td>
                   <td className="whitespace-nowrap">{fmtDate(c.created_at)}</td>
+                  {(canEdit || canArchive || canDelete) && (
+                    <td>
+                      <details className="candidate-actions" onClick={(event) => event.stopPropagation()}
+                        onKeyDown={(event) => event.stopPropagation()}>
+                        <summary className="btn-ghost candidate-actions-trigger">Actions</summary>
+                        <div className="candidate-actions-menu" role="group" aria-label="Candidate actions">
+                        {canEdit && (
+                          <button type="button" className="candidate-action-item" onClick={(event) => {
+                            event.currentTarget.closest("details")?.removeAttribute("open");
+                            onOpen(c.id, true);
+                          }}>Modify</button>
+                        )}
+                        {canArchive && (
+                          <button type="button" className="candidate-action-item"
+                            disabled={archiveActionId === c.id || deletingId === c.id}
+                            onClick={(event) => {
+                              event.currentTarget.closest("details")?.removeAttribute("open");
+                              void changeArchiveState(c);
+                            }}>
+                            {archiveActionId === c.id ? (archivedOnly ? "Restoring..." : "Archiving...") :
+                              archivedOnly ? "Restore" : "Archive"}
+                          </button>
+                        )}
+                        {canDelete && (
+                          <button type="button" className="candidate-action-item"
+                            disabled={deletingId === c.id || archiveActionId === c.id}
+                            onClick={(event) => {
+                              event.currentTarget.closest("details")?.removeAttribute("open");
+                              void removeCandidate(c);
+                            }}>
+                            {deletingId === c.id ? "Deleting..." : "Delete"}
+                          </button>
+                        )}
+                        </div>
+                      </details>
+                    </td>
+                  )}
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
       )}
+      {statusMessage && <p className="mt-3 text-sm" role="status">{statusMessage}</p>}
+      {actionMessage && <p className="mt-3 text-sm" role="status">{actionMessage}</p>}
     </section>
   );
 }

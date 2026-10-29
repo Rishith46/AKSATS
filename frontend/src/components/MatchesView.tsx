@@ -99,6 +99,11 @@ function Card({ c, rank, onOpen }: { c: Rec; rank: number; onOpen: (id: number) 
         <div>
           <p className="text-xs tracking-[0.3em] uppercase text-[var(--silver-600)]">#{rank}</p>
           <button className="link-name" onClick={() => onOpen(c.candidate_id)}>{c.full_name ?? NM}</button>
+          <div className="mt-2">
+            <button className="btn-ghost" onClick={() => onOpen(c.candidate_id)}>
+              Review resume &amp; evidence
+            </button>
+          </div>
           <div className="mt-2 flex flex-wrap items-center gap-2">
             <span className={recClass(c.recommendation)}>{c.recommendation}</span>
             <span className={c.parse_status === "Parsed" ? "badge" : "badge warn"}>{c.parse_status}</span>
@@ -112,6 +117,9 @@ function Card({ c, rank, onOpen }: { c: Rec; rank: number; onOpen: (id: number) 
           <ul className="reasons">
             {c.recommendation_reasons.map((t, i) => <li key={i}>{t}</li>)}
           </ul>
+          <p className="mt-2 text-xs text-[var(--silver-600)]">
+            Update only verified candidate details. Reopen this job&apos;s matches afterward to recalculate the score.
+          </p>
           {c.experience_gate.blocked && (
             <p className="mt-2 text-sm text-[#b42318]">Experience check: {c.experience_gate.detail}</p>
           )}

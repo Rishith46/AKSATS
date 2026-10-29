@@ -40,12 +40,14 @@ class SkillIn(BaseModel):
     name: Name = Field(max_length=150)
     years: Decimal | None = Field(default=None, ge=0, le=60)
     last_used_year: int | None = Field(default=None, ge=1970, le=THIS_YEAR + 1)
+    evidence: Opt = Field(default=None, max_length=10000)
     create_if_missing: bool = False
 
 
 class SkillPatch(BaseModel):
     years: Decimal | None = Field(default=None, ge=0, le=60)
     last_used_year: int | None = Field(default=None, ge=1970, le=THIS_YEAR + 1)
+    evidence: Opt = Field(default=None, max_length=10000)
 
 
 class ExpIn(BaseModel):
@@ -112,24 +114,29 @@ def add_skill(cid: int, body: SkillIn, response: Response, db: Session = Depends
     cs = db.scalar(select(CandidateSkill).where(CandidateSkill.candidate_id == cid,
                                                 CandidateSkill.skill_id == skill.id))
     if cs:
-        old = {"years": float(cs.years) if cs.years is not None else None, "last_used_year": cs.last_used_year}
+        old = {"years": float(cs.years) if cs.years is not None else None,
+               "last_used_year": cs.last_used_year, "evidence": cs.evidence}
         if "years" in body.model_fields_set:
             cs.years = body.years
         if "last_used_year" in body.model_fields_set:
             cs.last_used_year = body.last_used_year
+        if "evidence" in body.model_fields_set:
+            cs.evidence = body.evidence
         cs.source = "confirmed"
         response.status_code = 200
         action = "candidate.skill_updated"
     else:
         old = None
         cs = CandidateSkill(candidate_id=cid, skill_id=skill.id, years=body.years,
-                            last_used_year=body.last_used_year, source="confirmed")
+                            last_used_year=body.last_used_year, evidence=body.evidence,
+                            source="confirmed")
         db.add(cs)
         action = "candidate.skill_added"
     db.flush()
     _log(db, user, action, cid, old=old,
          new={"skill": skill.name, "years": float(cs.years) if cs.years is not None else None,
-              "last_used_year": cs.last_used_year, "new_to_skills_list": created})
+              "last_used_year": cs.last_used_year, "evidence": cs.evidence,
+              "new_to_skills_list": created})
     db.commit()
     return _skill_out(cs, skill.name, created)
 
@@ -140,16 +147,19 @@ def patch_skill(cid: int, skill_id: int, body: SkillPatch, db: Session = Depends
     _cand(db, cid)
     cs = _get_cs(db, cid, skill_id)
     name = db.get(Skill, skill_id).name
-    old = {"years": float(cs.years) if cs.years is not None else None, "last_used_year": cs.last_used_year}
+    old = {"years": float(cs.years) if cs.years is not None else None,
+           "last_used_year": cs.last_used_year, "evidence": cs.evidence}
     if "years" in body.model_fields_set:
         cs.years = body.years
     if "last_used_year" in body.model_fields_set:
         cs.last_used_year = body.last_used_year
+    if "evidence" in body.model_fields_set:
+        cs.evidence = body.evidence
     cs.source = "confirmed"
     db.flush()
     _log(db, user, "candidate.skill_updated", cid, old=old,
          new={"skill": name, "years": float(cs.years) if cs.years is not None else None,
-              "last_used_year": cs.last_used_year})
+              "last_used_year": cs.last_used_year, "evidence": cs.evidence})
     db.commit()
     return _skill_out(cs, name)
 

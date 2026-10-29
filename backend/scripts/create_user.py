@@ -6,11 +6,13 @@ from sqlalchemy import select
 from app.db import SessionLocal
 from app.models.access import Role, User
 from app.security import hash_password
+from scripts.seed import RESET_ROLE, RESET_USER_EMAIL
 
 
 def main() -> None:
     if len(sys.argv) < 4:
         print('Usage: python -m scripts.create_user email "Full Name" role')
+        print("Available roles are listed in the database; run scripts.seed to update roles.")
         return
     email, name, role_name = sys.argv[1].strip().lower(), sys.argv[2], sys.argv[3]
     pw = getpass.getpass("Password (min 12 characters): ")
@@ -27,6 +29,12 @@ def main() -> None:
             return
         user = User(email=email, full_name=name, password_hash=hash_password(pw))
         user.roles = [role]
+        if email == RESET_USER_EMAIL:
+            reset_role = db.scalar(select(Role).where(Role.name == RESET_ROLE))
+            if reset_role is None:
+                print("Vamshi's reset role is missing. Run: python -m scripts.seed")
+                return
+            user.roles.append(reset_role)
         db.add(user)
         db.commit()
         print(f"User created: {email} with role {role_name}")

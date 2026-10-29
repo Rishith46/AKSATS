@@ -1,4 +1,4 @@
-export const API_URL = "http://127.0.0.1:8000";
+export const API_URL = (process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000").replace(/\/+$/, "");
 
 export type Me = {
   id: number;
@@ -8,6 +8,60 @@ export type Me = {
   roles: string[];
   permissions: string[];
 };
+
+export const CANDIDATE_STATUSES = [
+  "Open",
+  "Vendor Submission",
+  "Client Submission",
+  "Vendor Interview Scheduled",
+  "Client Interview Scheduled",
+  "Rejected",
+] as const;
+
+export type DashboardMonth = {
+  month: string;
+  email_resumes: number;
+  upload_resumes: number;
+  job_roles: number;
+  new_candidates: number;
+};
+
+export type DashboardBreakdown = {
+  status: string;
+  count: number;
+};
+
+export type DashboardSummary = {
+  generated_at: string;
+  totals: {
+    active_candidates: number;
+    open_jobs: number;
+    parsed_this_month: number;
+    awaiting_processing: number;
+    needs_review: number;
+  };
+  candidate_statuses: DashboardBreakdown[];
+  candidate_parse_statuses: DashboardBreakdown[];
+  months: DashboardMonth[];
+  resume_count_definition: string;
+  candidate_count_definition: string;
+};
+
+export async function getDashboardSummary(token: string): Promise<DashboardSummary> {
+  let res: Response;
+  try {
+    res = await fetch(`${API_URL}/dashboard/summary?months=12`, {
+      headers: { Authorization: "Bearer " + token },
+      cache: "no-store",
+    });
+  } catch {
+    throw new Error("Cannot reach the server");
+  }
+  if (res.status === 401) throw new SessionError("Your session has expired");
+  if (res.status === 403) throw new Error("Admin access required");
+  if (!res.ok) throw new Error("Could not load the dashboard");
+  return (await res.json()) as DashboardSummary;
+}
 
 export async function login(email: string, password: string): Promise<string> {
   let res: Response;
@@ -33,9 +87,34 @@ export async function fetchMe(token: string): Promise<Me> {
   } catch {
     throw new Error("Cannot reach the server");
   }
+  if (res.status === 401) throw new SessionError("Your session has expired");
   if (!res.ok) throw new Error("Session is no longer valid");
   return (await res.json()) as Me;
 }
+
+export async function resetAllAtsData(token: string): Promise<{ ok: boolean; message: string }> {
+  let res: Response;
+  try {
+    res = await fetch(`${API_URL}/meta/reset`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+    });
+  } catch {
+    throw new Error("Cannot reach the server");
+  }
+  if (res.status === 401) throw new Error("Your session has expired");
+  if (res.status === 403) throw new Error("You do not have permission to reset ATS data");
+  if (!res.ok) {
+    let detail = "Could not reset ATS data";
+    try {
+      const body = await res.json();
+      if (typeof body?.detail === "string") detail = body.detail;
+    } catch {}
+    throw new Error(detail);
+  }
+  return (await res.json()) as { ok: boolean; message: string };
+}
+
 export type Candidate = {
   id: number;
   full_name: string | null;
@@ -65,6 +144,7 @@ export async function listCandidates(token: string, includeArchived: boolean): P
 }
 export type InboxItem = {
   id: number;
+  source: "upload" | "email";
   filename: string;
   status: string;
   issues: { reason?: string } | null;
@@ -76,6 +156,7 @@ export type InboxItem = {
 export type InboxData = {
   total: number;
   by_status: Record<string, number>;
+  email_polling: boolean;
   items: InboxItem[];
 };
 
@@ -128,8 +209,11 @@ export type Profile = {
   phone: string | null;
   linkedin_url: string | null;
   location: string | null;
+  country: string | null;
+  availability: string | null;
   visa_status: string | null;
   rate: string | null;
+  rate_unit: string | null;
   total_experience_years: string | null;
   status: string;
   parse_status: string;
@@ -140,11 +224,25 @@ export type Profile = {
     id: number;
     company: string | null;
     title: string | null;
+    location: string | null;
+    description: string | null;
     start_date: string | null;
     start_precision: string | null;
     end_date: string | null;
     end_precision: string | null;
     is_current: boolean;
+  }[];
+  education: {
+    institution: string | null;
+    degree: string | null;
+    field_of_study: string | null;
+    start_year: number | null;
+    end_year: number | null;
+  }[];
+  certifications: {
+    name: string;
+    issuer: string | null;
+    year: number | null;
   }[];
   skills: { name: string; evidence: string | null; source: string }[];
   documents: {
@@ -154,6 +252,7 @@ export type Profile = {
     version_no: number | null;
     is_current: boolean;
     uploaded_at: string;
+    extracted_text: string | null;
   }[];
 };
 
@@ -168,6 +267,92 @@ export async function getProfile(token: string, id: number): Promise<Profile> {
   if (res.status === 404) throw new Error("This candidate no longer exists");
   if (!res.ok) throw new Error("Could not load the profile");
   return (await res.json()) as Profile;
+}
+
+export async function getCandidateDocument(token: string, candidateId: number, documentId: number): Promise<Blob> {
+  let res: Response;
+  try {
+    res = await fetch(`${API_URL}/candidates/${candidateId}/documents/${documentId}/download`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+  } catch {
+    throw new Error("Cannot reach the server");
+  }
+  if (res.status === 401) throw new SessionError("Your session has expired");
+  if (res.status === 404) throw new Error("This resume file is no longer available");
+  if (!res.ok) throw new Error("Could not load the original resume");
+  return res.blob();
+}
+
+export async function getATSResumeExport(
+  token: string,
+  candidateId: number,
+  format: "docx" | "pdf"
+): Promise<Blob> {
+  let res: Response;
+  try {
+    res = await fetch(`${API_URL}/candidates/${candidateId}/resume-export?format=${format}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+  } catch {
+    throw new Error("Cannot reach the server");
+  }
+  if (res.status === 401) throw new SessionError("Your session has expired");
+  if (res.status === 403) throw new Error("You do not have permission to export this resume");
+  if (!res.ok) {
+    let detail = "Could not export the ATS resume";
+    try {
+      const body = await res.json();
+      if (typeof body?.detail === "string") detail = body.detail;
+    } catch {}
+    throw new Error(detail);
+  }
+  return res.blob();
+}
+
+export async function reparseResume(
+  token: string,
+  candidateId: number,
+  documentId: number
+): Promise<{
+  status: string;
+  fields_filled?: string[];
+  experiences?: number;
+  education?: number;
+  certifications?: number;
+  skills?: number;
+  missing?: string[];
+  reason?: string;
+}> {
+  let res: Response;
+  try {
+    res = await fetch(
+      `${API_URL}/candidates/${candidateId}/documents/${documentId}/parse`,
+      { method: "POST", headers: { Authorization: `Bearer ${token}` } }
+    );
+  } catch {
+    throw new Error("Cannot reach the server");
+  }
+  if (res.status === 401) throw new SessionError("Your session has expired");
+  if (res.status === 403) throw new Error("You do not have permission to parse resumes");
+  if (!res.ok) {
+    let detail = "Could not parse this resume";
+    try {
+      const body = await res.json();
+      if (typeof body?.detail === "string") detail = body.detail;
+    } catch {}
+    throw new Error(detail);
+  }
+  return (await res.json()) as {
+    status: string;
+    fields_filled?: string[];
+    experiences?: number;
+    education?: number;
+    certifications?: number;
+    skills?: number;
+    missing?: string[];
+    reason?: string;
+  };
 }
 export type Note = {
   id: number;
@@ -218,11 +403,11 @@ export type CandidateFilters = {
 
 export async function listCandidatesFiltered(
   token: string,
-  includeArchived: boolean,
+  archivedOnly: boolean,
   f: CandidateFilters
 ): Promise<CandidateRow[]> {
   const p = new URLSearchParams();
-  p.set("include_archived", String(includeArchived));
+  p.set("archived_only", String(archivedOnly));
   p.set("limit", "200");
   if (f.q) p.set("q", f.q);
   if (f.location) p.set("location", f.location);
@@ -242,6 +427,57 @@ export async function listCandidatesFiltered(
   if (!res.ok) throw new Error("Could not load candidates");
   return (await res.json()) as CandidateRow[];
 }
+
+async function setCandidateArchived(token: string, id: number, action: "archive" | "restore"): Promise<void> {
+  let res: Response;
+  try {
+    res = await fetch(`${API_URL}/candidates/${id}/${action}`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+    });
+  } catch {
+    throw new Error("Cannot reach the server");
+  }
+  if (res.status === 401) throw new SessionError("Your session has expired");
+  if (res.status === 403) throw new Error(`You do not have permission to ${action} candidates`);
+  if (!res.ok) {
+    let detail = `Could not ${action} the candidate`;
+    try {
+      const body = await res.json();
+      if (typeof body?.detail === "string") detail = body.detail;
+    } catch {}
+    throw new Error(detail);
+  }
+}
+
+export const archiveCandidate = (token: string, id: number) =>
+  setCandidateArchived(token, id, "archive");
+export const restoreCandidate = (token: string, id: number) =>
+  setCandidateArchived(token, id, "restore");
+
+export async function deleteCandidate(token: string, id: number, confirmName: string): Promise<void> {
+  const query = new URLSearchParams({ confirm_name: confirmName });
+  let res: Response;
+  try {
+    res = await fetch(`${API_URL}/candidates/${id}?${query.toString()}`, {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${token}` },
+    });
+  } catch {
+    throw new Error("Cannot reach the server");
+  }
+  if (res.status === 401) throw new SessionError("Your session has expired");
+  if (res.status === 403) throw new Error("You do not have permission to delete candidates");
+  if (!res.ok) {
+    let detail = "Could not delete the candidate";
+    try {
+      const body = await res.json();
+      if (typeof body?.detail === "string") detail = body.detail;
+    } catch {}
+    throw new Error(detail);
+  }
+}
+
 export type Job = {
   id: number;
   title: string;
@@ -250,7 +486,7 @@ export type Job = {
   location: string | null;
   work_mode: string | null;
   required_experience_years: string | null;
-  visa_requirements: string | null;
+  visa_requirements: string[];
   rate: string | null;
   status: string;
   owner_id: number | null;
@@ -295,6 +531,68 @@ export async function saveJob(token: string, id: number | null, payload: Record<
     throw new Error(detail);
   }
   return (await res.json()) as Job;
+}
+
+export type JobDescriptionDraft = {
+  title: string | null;
+  client: string | null;
+  location: string | null;
+  work_mode: string | null;
+  required_experience_years: number | null;
+  visa_requirements: string[];
+  rate: number | null;
+  required_skills: string[];
+  preferred_skills: string[];
+  mentioned_only: string[];
+  skill_suggestions: string[];
+  unrecognized: string[];
+  notes: string[];
+};
+
+export async function readJobDescription(token: string, text: string): Promise<JobDescriptionDraft> {
+  let res: Response;
+  try {
+    res = await fetch(`${API_URL}/jobs/read-jd`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ text }),
+    });
+  } catch {
+    throw new Error("Cannot reach the server");
+  }
+  if (res.status === 401) throw new SessionError("Your session has expired");
+  if (res.status === 403) throw new Error("You do not have permission to parse job descriptions");
+  if (!res.ok) {
+    let detail = "Could not read the job description";
+    try {
+      const body = await res.json();
+      if (typeof body?.detail === "string") detail = body.detail;
+    } catch {}
+    throw new Error(detail);
+  }
+  return (await res.json()) as JobDescriptionDraft;
+}
+
+export async function deleteJob(token: string, id: number): Promise<void> {
+  let res: Response;
+  try {
+    res = await fetch(`${API_URL}/jobs/${id}`, {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${token}` },
+    });
+  } catch {
+    throw new Error("Cannot reach the server");
+  }
+  if (res.status === 401) throw new SessionError("Your session has expired");
+  if (res.status === 403) throw new Error("You do not have permission to delete jobs");
+  if (!res.ok) {
+    let detail = "Could not delete the job";
+    try {
+      const body = await res.json();
+      if (typeof body?.detail === "string") detail = body.detail;
+    } catch {}
+    throw new Error(detail);
+  }
 }
 
 export type MatchSignal = { score: number | null; weight: number; detail: string };
@@ -349,4 +647,43 @@ export async function getVisaOptions(token: string): Promise<VisaOption[]> {
   }
   if (!res.ok) throw new Error("Could not load the visa list");
   return (await res.json()) as VisaOption[];
+}
+
+export type SkillOption = { id: number; name: string };
+export type SkillReviewList = { pending: SkillOption[]; approved: SkillOption[] };
+
+export async function getSkillReviewList(token: string): Promise<SkillReviewList> {
+  let res: Response;
+  try {
+    res = await fetch(`${API_URL}/meta/skills/review`, { headers: { Authorization: `Bearer ${token}` } });
+  } catch {
+    throw new Error("Cannot reach the server");
+  }
+  if (res.status === 401) throw new SessionError("Your session has expired");
+  if (res.status === 403) throw new Error("You do not have permission to review skills");
+  if (!res.ok) throw new Error("Could not load skills for review");
+  return (await res.json()) as SkillReviewList;
+}
+
+export async function reviewSkill(token: string, skillId: number, canonicalSkillId: number | null): Promise<void> {
+  let res: Response;
+  try {
+    res = await fetch(`${API_URL}/meta/skills/${skillId}/review`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ canonical_skill_id: canonicalSkillId }),
+    });
+  } catch {
+    throw new Error("Cannot reach the server");
+  }
+  if (res.status === 401) throw new SessionError("Your session has expired");
+  if (res.status === 403) throw new Error("You do not have permission to review skills");
+  if (!res.ok) {
+    let detail = "Could not review this skill";
+    try {
+      const body = await res.json();
+      if (typeof body.detail === "string") detail = body.detail;
+    } catch {}
+    throw new Error(detail);
+  }
 }

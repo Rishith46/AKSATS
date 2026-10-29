@@ -1,4 +1,5 @@
 import re
+from datetime import date
 
 from app.visa import mentions
 
@@ -15,13 +16,95 @@ DEFAULT_WEIGHTS = {
     "recent_roles": 15, "job_title": 5, "location": 5, "visa": 5,
 }
 
-NOT_SCORED = {
-    "recent_roles": "Not available yet: embeddings are not built",
+NOT_SCORED = {}
+
+ROLE_STOP = {
+    "about", "across", "also", "and", "are", "as", "at", "be", "been", "being", "both",
+    "but", "by", "can", "candidate", "candidates", "could", "day", "do", "experience",
+    "experienced", "for", "from",
+    "good", "have", "having", "help", "in", "including", "into", "is", "it", "its", "job",
+    "key", "knowledge", "looking", "more", "must", "new", "not", "of", "on", "or", "our",
+    "over", "preferred", "professional", "provide", "qualifications", "responsibilities",
+    "role", "required", "requirements", "should", "skill", "skills", "strong", "such",
+    "team", "that", "the", "their", "them", "there", "these", "this", "through", "to",
+    "under", "use", "using", "various", "very", "we", "well", "will", "with", "work",
+    "working", "years", "you",
+}
+ROLE_TOKEN_RE = re.compile(r"(?i)(?:c\+\+|c#|\.net|[a-z][a-z0-9+#.-]{2,})")
+ROLE_WORD_FORMS = {
+    "built": "build", "led": "lead", "made": "make", "ran": "run",
+    "written": "write", "wrote": "write",
 }
 
 
 def _words(t):
     return {w for w in re.findall(r"[a-z0-9+#]+", (t or "").lower()) if w not in STOP}
+
+
+def _role_terms(text):
+    terms = set()
+    for raw_token in ROLE_TOKEN_RE.findall(text or ""):
+        token = raw_token.lower().strip(".")
+        if token in ROLE_STOP:
+            continue
+        if token in ROLE_WORD_FORMS:
+            token = ROLE_WORD_FORMS[token]
+        elif token.endswith("ies") and len(token) > 5:
+            token = token[:-3] + "y"
+        elif token.endswith("ing") and len(token) > 5:
+            token = token[:-3]
+            if len(token) > 2 and token[-1] == token[-2]:
+                token = token[:-1]
+        elif token.endswith("ed") and len(token) > 4:
+            token = token[:-2]
+        elif token.endswith("s") and len(token) > 4:
+            token = token[:-1]
+        if (len(token) >= 3 or token == "c#") and token not in ROLE_STOP:
+            terms.add(token)
+    return terms
+
+
+def recent_roles_score(job_description, experiences, as_of=None, recent_years=RECENT_YEARS):
+    """Compare job-description keywords with dated, recent experience descriptions.
+
+    The Dice overlap is an explainable lexical signal, not an embedding or semantic model.
+    """
+    if not job_description or not job_description.strip():
+        return None, "Job description is not available for role comparison"
+
+    today = as_of or date.today()
+    try:
+        cutoff = today.replace(year=today.year - recent_years)
+    except ValueError:
+        cutoff = today.replace(year=today.year - recent_years, day=28)
+    recent = [
+        experience for experience in experiences
+        if experience.is_current
+        or (experience.end_date is not None and experience.end_date >= cutoff)
+        or (experience.end_date is None and experience.start_date is not None
+            and experience.start_date >= cutoff)
+    ]
+    job_terms = _role_terms(job_description)
+    role_terms = set()
+    role_count = 0
+    for experience in recent:
+        description = experience.description or ""
+        if not description.strip():
+            continue
+        role_count += 1
+        role_terms.update(_role_terms(description))
+
+    if not job_terms:
+        return None, "Job description has no comparable role keywords"
+    if not role_terms:
+        return None, f"No responsibility details found in roles from the last {recent_years} years"
+
+    matching = job_terms & role_terms
+    score = 2 * len(matching) / (len(job_terms) + len(role_terms))
+    return score, (
+        f"{len(matching)} overlapping keywords across {role_count} recent role(s); "
+        "lexical comparison of responsibilities"
+    )
 
 
 def norm_title(t):
@@ -75,12 +158,13 @@ def location_score(job_loc, work_mode, cand_loc):
 
 
 def visa_score(job_visa, cand_visa):
-    if not job_visa or not job_visa.strip():
+    if not job_visa:
         return None, "Job has no work authorization requirement"
     if not cand_visa or not cand_visa.strip():
         return None, "Candidate work authorization not mentioned"
     c = cand_visa.strip()
-    if mentions(job_visa, c):
+    requirements = job_visa if isinstance(job_visa, (list, tuple, set)) else str(job_visa).split(",")
+    if any(mentions(requirement.strip(), c) for requirement in requirements if requirement.strip()):
         return 1.0, f"{c} is listed in the requirement"
     return 0.0, f"{c} is not listed in the requirement"
 

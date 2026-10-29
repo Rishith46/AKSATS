@@ -8,7 +8,7 @@ from app.deps import get_db, require_permission
 from app.geo import split_location, state_code
 from app.models.access import User
 from app.models.candidates import Skill, SkillAlias
-from app.models.jobs import Client, Job, JobLocation, JobSkill
+from app.models.jobs import Client, Job, JobLocation, JobSkill, Submission
 from app.models.system import ActivityLog
 from app.schemas.jobs import STATUSES, WORK_MODES, JobCreate, JobUpdate
 
@@ -33,30 +33,27 @@ def _check_enums(work_mode, status):
 
 def _resolve(db: Session, names: list[str]):
     found: dict[int, str] = {}
-    unknown: list[str] = []
     for raw in names:
         t = raw.strip()
         if not t:
             continue
+        if len(t) > 150:
+            raise HTTPException(status_code=422, detail="Skill names must be 150 characters or fewer")
         s = db.scalar(select(Skill).where(func.lower(Skill.name) == t.lower()))
         if s is None:
             s = db.scalar(select(Skill).join(SkillAlias, SkillAlias.skill_id == Skill.id)
                           .where(func.lower(SkillAlias.alias) == t.lower()))
         if s is None:
-            unknown.append(t)
-        else:
-            found[s.id] = s.name
-    return found, unknown
+            s = Skill(name=t, needs_review=True)
+            db.add(s)
+            db.flush()
+        found[s.id] = s.name
+    return found
 
 
 def _resolve_both(db: Session, required: list[str], preferred: list[str]):
-    req, unk1 = _resolve(db, required)
-    pref, unk2 = _resolve(db, preferred)
-    unknown = unk1 + unk2
-    if unknown:
-        raise HTTPException(status_code=400, detail=(
-            "Unknown skills: " + ", ".join(unknown) +
-            ". Skills must exist in the skills list; nothing was saved."))
+    req = _resolve(db, required)
+    pref = _resolve(db, preferred)
     both = set(req) & set(pref)
     if both:
         names = ", ".join(sorted(req[i] for i in both))
@@ -115,6 +112,10 @@ def _skill_names(db: Session, job_id: int):
     return [n for n, r in rows if r], [n for n, r in rows if not r]
 
 
+def _visa_values(value: str | None) -> list[str]:
+    return [v.strip() for v in (value or "").split(",") if v.strip()]
+
+
 def _locations(db: Session, job_id: int) -> list[dict]:
     rows = db.scalars(select(JobLocation).where(JobLocation.job_id == job_id)
                       .order_by(JobLocation.position, JobLocation.id)).all()
@@ -129,7 +130,7 @@ def _out(db: Session, j: Job) -> dict:
         "location": j.location, "work_mode": j.work_mode,
         "location_preference": j.location_preference, "locations": _locations(db, j.id),
         "required_experience_years": str(j.required_experience_years) if j.required_experience_years is not None else None,
-        "visa_requirements": j.visa_requirements,
+        "visa_requirements": _visa_values(j.visa_requirements),
         "rate": str(j.rate) if j.rate is not None else None,
         "status": j.status, "owner_id": j.owner_id,
         "created_at": j.created_at, "updated_at": j.updated_at,
@@ -168,7 +169,7 @@ def create_job(body: JobCreate, db: Session = Depends(get_db),
             description=body.description, location=body.location, work_mode=body.work_mode,
             location_preference=body.location_preference,
             required_experience_years=body.required_experience_years,
-            visa_requirements=body.visa_requirements, rate=body.rate,
+            visa_requirements=",".join(body.visa_requirements or []) or None, rate=body.rate,
             status=body.status, owner_id=user.id)
     db.add(j)
     db.flush()
@@ -246,7 +247,12 @@ def update_job(jid: int, body: JobUpdate, db: Session = Depends(get_db),
     for k in SCALARS:
         if k in changes:
             old[k] = str(getattr(j, k)) if getattr(j, k) is not None else None
-            setattr(j, k, changes[k].strip() if k == "title" else changes[k])
+            value = changes[k]
+            if k == "title":
+                value = value.strip()
+            elif k == "visa_requirements":
+                value = ",".join(value or []) or None
+            setattr(j, k, value)
             new[k] = str(getattr(j, k)) if getattr(j, k) is not None else None
     if "client" in changes:
         old["client"] = db.get(Client, j.client_id).name if j.client_id else None
@@ -271,3 +277,28 @@ def update_job(jid: int, body: JobUpdate, db: Session = Depends(get_db),
     db.commit()
     db.refresh(j)
     return _out(db, j)
+
+
+@router.delete("/{jid}")
+def delete_job(jid: int, db: Session = Depends(get_db),
+               user: User = Depends(require_permission("job.delete"))):
+    job = _get(db, jid)
+    client = db.get(Client, job.client_id) if job.client_id else None
+    submission_count = db.scalar(
+        select(func.count()).select_from(Submission).where(Submission.job_id == jid)
+    ) or 0
+    db.add(ActivityLog(
+        user_id=user.id,
+        action="job.deleted",
+        object_type="job",
+        object_id=job.id,
+        old_value={
+            "title": job.title,
+            "client": client.name if client else None,
+            "status": job.status,
+            "submissions_removed": submission_count,
+        },
+    ))
+    db.delete(job)
+    db.commit()
+    return {"deleted_job_id": jid, "submissions_removed": submission_count}

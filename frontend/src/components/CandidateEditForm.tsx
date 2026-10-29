@@ -62,6 +62,8 @@ export default function CandidateEditForm({
   const [skillName, setSkillName] = useState("");
   const [skillYears, setSkillYears] = useState("");
   const [skillLast, setSkillLast] = useState("");
+  const [skillEvidence, setSkillEvidence] = useState("");
+  const [editingSkillId, setEditingSkillId] = useState<number | null>(null);
   const [skillMsg, setSkillMsg] = useState<string | null>(null);
   const [unknownSkill, setUnknownSkill] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -170,8 +172,16 @@ export default function CandidateEditForm({
       return;
     }
     const body: Record<string, unknown> = { name };
-    if (skillYears.trim() !== "") body.years = Number(skillYears);
-    if (skillLast.trim() !== "") body.last_used_year = Number(skillLast);
+    if (editingSkillId !== null || skillEvidence.trim()) {
+      body.evidence = skillEvidence.trim() || null;
+    }
+    if (editingSkillId !== null) {
+      body.years = skillYears.trim() === "" ? null : Number(skillYears);
+      body.last_used_year = skillLast.trim() === "" ? null : Number(skillLast);
+    } else {
+      if (skillYears.trim() !== "") body.years = Number(skillYears);
+      if (skillLast.trim() !== "") body.last_used_year = Number(skillLast);
+    }
     if (createNew) body.create_if_missing = true;
     setBusy(true);
     setSkillMsg(null);
@@ -181,6 +191,8 @@ export default function CandidateEditForm({
       setSkillName("");
       setSkillYears("");
       setSkillLast("");
+      setSkillEvidence("");
+      setEditingSkillId(null);
       setUnknownSkill(null);
       setSkillMsg(`${name} saved.`);
     } catch (err) {
@@ -193,6 +205,25 @@ export default function CandidateEditForm({
     } finally {
       setBusy(false);
     }
+  }
+
+  function editSkill(skill: FullProfile["skills"][number]) {
+    setEditingSkillId(skill.skill_id);
+    setSkillName(skill.name);
+    setSkillYears(skill.years === null ? "" : String(skill.years));
+    setSkillLast(skill.last_used_year === null ? "" : String(skill.last_used_year));
+    setSkillEvidence(skill.evidence ?? "");
+    setUnknownSkill(null);
+    setSkillMsg(null);
+  }
+
+  function cancelSkillEdit() {
+    setEditingSkillId(null);
+    setSkillName("");
+    setSkillYears("");
+    setSkillLast("");
+    setSkillEvidence("");
+    setUnknownSkill(null);
   }
 
   async function dropSkill(skillId: number) {
@@ -343,25 +374,43 @@ export default function CandidateEditForm({
           )}
 
           <h2 className="section-title">Skills</h2>
-          <p className="mb-3 text-xs text-[var(--silver-600)]">Changes to skills and jobs are saved immediately.</p>
-          <div className="flex flex-wrap gap-2">
+          <p className="mb-3 text-xs text-[var(--silver-600)]">
+            Add only verified experience. Years and last-used dates affect match scoring; evidence appears in match notes and the ATS resume.
+          </p>
+          <div className="space-y-2">
             {prof.skills.length === 0 && <span className="text-sm text-[var(--silver-600)]">No skills yet.</span>}
             {prof.skills.map((s) => (
-              <span key={s.skill_id} className="badge" title={`Source: ${s.source}`}>
-                {s.name}
-                {s.years !== null ? ` \u00b7 ${s.years}y` : ""}
-                {s.last_used_year !== null ? ` \u00b7 ${s.last_used_year}` : ""}
-                <button className="ml-2 font-bold" aria-label={`Remove ${s.name}`} onClick={() => dropSkill(s.skill_id)} disabled={busy}>&times;</button>
-              </span>
+              <div key={s.skill_id} className="match-card flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <p className="font-semibold">{s.name}</p>
+                  <p className="text-xs text-[var(--silver-600)]">
+                    {[s.years !== null ? `${s.years} years` : null, s.last_used_year ? `last used ${s.last_used_year}` : null]
+                      .filter(Boolean).join(" · ") || "No duration or recency recorded"}
+                  </p>
+                  {s.evidence && <p className="mt-1 text-sm">{s.evidence}</p>}
+                </div>
+                <div className="flex gap-2">
+                  <button className="btn-ghost" onClick={() => editSkill(s)} disabled={busy}>Edit</button>
+                  <button className="btn-ghost" aria-label={`Remove ${s.name}`} onClick={() => dropSkill(s.skill_id)} disabled={busy}>&times;</button>
+                </div>
+              </div>
             ))}
           </div>
           <div className="form-grid mt-4">
             <Field label="Skill" value={skillName} onChange={(v) => { setSkillName(v); setUnknownSkill(null); }} placeholder="e.g. Python or K8s" />
             <Field label="Years used" value={skillYears} onChange={setSkillYears} placeholder="optional" />
             <Field label="Last used (year)" value={skillLast} onChange={setSkillLast} placeholder="optional, e.g. 2026" />
+            <label className="field span-all">
+              <span>Resume evidence / impact</span>
+              <textarea rows={3} value={skillEvidence} onChange={(e) => setSkillEvidence(e.target.value)}
+                placeholder="Add a factual example from the candidate's experience" />
+            </label>
           </div>
           <div className="mt-3 flex flex-wrap items-center gap-3">
-            <button className="btn-dark" onClick={() => submitSkill(false)} disabled={busy}>Add skill</button>
+            <button className="btn-dark" onClick={() => submitSkill(false)} disabled={busy}>
+              {editingSkillId === null ? "Add skill" : "Save skill"}
+            </button>
+            {editingSkillId !== null && <button className="btn-ghost" onClick={cancelSkillEdit} disabled={busy}>Cancel edit</button>}
             <span className="text-xs text-[var(--silver-600)]">Adding a skill that is already listed updates its years.</span>
           </div>
           {unknownSkill && (

@@ -16,7 +16,10 @@ assert check_location("relocation_ok", "Dallas, TX", [], "Tulsa, OK", None)[0] =
 assert check_location("relocation_ok", "Dallas, TX", [], None, None)[0] == "eligible"
 assert check_location("relocation_ok", "Dallas, TX", [], "Tulsa, OK", "United States")[0] == "eligible"
 assert check_location("relocation_ok", "Dallas, TX", [], "Hyderabad, Telangana", "India")[0] == "ineligible"
-assert location_signal("relocation_ok", "Dallas, TX", "Onsite", [], "Tulsa, OK")[0] is None
+assert location_signal("relocation_ok", "Dallas, TX", "Onsite", [], "Tulsa, OK")[0] == 1.0
+assert location_signal("relocation_ok", "Dallas, TX", "Onsite", [], None)[0] == 1.0
+assert location_signal("relocation_ok", "Dallas, TX", "Remote", [], "Tulsa, OK") == (
+    None, "Remote job, location not scored")
 
 # Relocation Not OK: state-level
 assert check_location("relocation_not_ok", "Dallas, TX", [], "Austin, TX", None)[0] == "eligible"
@@ -55,6 +58,7 @@ assert location_signal("multiple", None, "Onsite", two, "Austin, TX")[0] == 1.0
 assert location_signal("multiple", None, "Onsite", two, "Waco, TX")[0] == 0.5
 assert location_signal("multiple", None, "Onsite", two, "Denver, CO")[0] == 0.0
 assert location_signal("multiple", None, "Onsite", state_only, "Waco, TX")[0] == 0.5
-assert location_signal("multiple", None, "Onsite", mixed, "Denver, CO")[0] is None
+assert location_signal("multiple", None, "Onsite", mixed, "Denver, CO")[0] == 1.0
+assert location_signal("multiple", None, "Onsite", mixed, None)[0] == 1.0
 assert location_signal("multiple", None, "Onsite", two, None)[0] is None
 print("location rule checks passed")

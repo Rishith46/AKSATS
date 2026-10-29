@@ -1,18 +1,25 @@
 import logging
+import re
 from datetime import date
 from decimal import Decimal
 from pathlib import Path
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.models.candidates import (Candidate, CandidateDocument, CandidateExperience,
-                                   CandidateSkill, Skill)
+                                   CandidateCertification, CandidateEducation, CandidateSkill,
+                                   Skill, SkillAlias)
 from app.models.system import ActivityLog
 from app.services.experience_extract import extract_experiences
 from app.services.experience_years import years_from
 from app.services.field_extract import extract_fields
+from app.services.resume_sections import (
+    extract_certifications,
+    extract_education,
+    extract_resume_skills,
+)
 from app.services.skill_match import find_skills, load_terms
 from app.services.skill_history import skill_history
 from app.services.text_extract import ExtractionError, extract_text
@@ -49,23 +56,57 @@ def parse_document(db: Session, doc_id: int, user_id: int | None = None) -> dict
         db.commit()
         return {"status": "Needs Review", "reason": str(exc)}
 
+    doc.extracted_text = text
     fields = extract_fields(text)
     sources = dict(cand.field_sources or {})
     filled = []
     for k, v in fields.items():
-        if v and not getattr(cand, k):
+        source = sources.get(k)
+        if v and (not getattr(cand, k) or source in {"extracted", "inferred"}):
+            if getattr(cand, k) == v:
+                continue
             setattr(cand, k, v)
             sources[k] = "extracted"
             filled.append(k)
 
-    exps = extract_experiences(text)
-    db.execute(delete(CandidateExperience).where(CandidateExperience.candidate_id == cand.id))
-    for e in exps:
-        db.add(CandidateExperience(
-            candidate_id=cand.id, company=e["company"], title=e["title"],
-            start_date=_to_date(e["start"]), end_date=_to_date(e["end"]),
-            start_precision=_precision(e["start"]), end_precision=_precision(e["end"]),
-            is_current=e["is_current"], description=e.get("description")))
+    experience_error = None
+    try:
+        exps = extract_experiences(text)
+    except Exception as exc:
+        log.exception("Could not extract structured experience for document %s", doc.id)
+        exps = []
+        experience_error = "Work history could not be structured automatically; review the extracted resume text."
+    if exps:
+        db.execute(delete(CandidateExperience).where(CandidateExperience.candidate_id == cand.id))
+        for e in exps:
+            db.add(CandidateExperience(
+                candidate_id=cand.id, company=e["company"], title=e["title"],
+                start_date=_to_date(e["start"]), end_date=_to_date(e["end"]),
+                start_precision=_precision(e["start"]), end_precision=_precision(e["end"]),
+                is_current=e["is_current"], description=e.get("description")))
+
+    education = extract_education(text)
+    if education:
+        db.execute(delete(CandidateEducation).where(CandidateEducation.candidate_id == cand.id))
+    existing_education = set()
+    for row in education:
+        key = (row["institution"], row["degree"], row["field_of_study"],
+               row["start_year"], row["end_year"])
+        if key not in existing_education:
+            db.add(CandidateEducation(candidate_id=cand.id, **row))
+            existing_education.add(key)
+
+    certifications = extract_certifications(text)
+    if certifications:
+        db.execute(delete(CandidateCertification).where(
+            CandidateCertification.candidate_id == cand.id
+        ))
+    existing_certifications = set()
+    for row in certifications:
+        key = (row["name"], row["issuer"], row["year"])
+        if key not in existing_certifications:
+            db.add(CandidateCertification(candidate_id=cand.id, **row))
+            existing_certifications.add(key)
 
     exp_years = years_from([{"start": _to_date(e["start"]), "end": _to_date(e["end"]),
                              "is_current": e["is_current"]} for e in exps])
@@ -75,7 +116,21 @@ def parse_document(db: Session, doc_id: int, user_id: int | None = None) -> dict
         sources["total_experience_years"] = "inferred"
 
     terms = load_terms(db)
-    found = find_skills(text, terms)
+    found_by_name = {item["skill"].casefold(): item for item in find_skills(text, terms)}
+    for name in extract_resume_skills(text):
+        skill = db.scalar(select(Skill).where(func.lower(Skill.name) == name.casefold()))
+        if skill is None:
+            alias = db.scalar(select(SkillAlias).where(func.lower(SkillAlias.alias) == name.casefold()))
+            skill = db.get(Skill, alias.skill_id) if alias else None
+        if skill is None:
+            skill = Skill(name=name, needs_review=True)
+            db.add(skill)
+            db.flush()
+        found_by_name.setdefault(skill.name.casefold(), {
+            "skill": skill.name,
+            "evidence": name,
+        })
+    found = list(found_by_name.values())
     hist = skill_history([{"title": e["title"], "description": e.get("description"),
                            "start": _to_date(e["start"]), "end": _to_date(e["end"]),
                            "is_current": e["is_current"]} for e in exps], terms)
@@ -95,12 +150,24 @@ def parse_document(db: Session, doc_id: int, user_id: int | None = None) -> dict
 
     cand.field_sources = sources
     missing = [k for k in ("full_name", "email", "phone") if not getattr(cand, k)]
-    cand.parse_status = "Needs Review" if missing else "Parsed"
+    experience_section_found = bool(
+        re.search(
+            r"^\s*(?:(?:professional|work|career|employment)\s+)?"
+            r"(?:experience|history|employment\s+history|career\s+history|work\s+history)\s*:?\s*$",
+            text,
+            re.I | re.M,
+        )
+    )
+    if experience_section_found and not exps and experience_error is None:
+        experience_error = "Work history was found but could not be structured; review the extracted resume text."
+    cand.parse_status = "Needs Review" if missing or experience_error else "Parsed"
     db.add(ActivityLog(user_id=user_id, action="resume.parsed", object_type="candidate",
                        object_id=cand.id,
                        new_value={"document_id": doc.id, "fields_filled": filled,
                                   "experiences": len(exps), "skills": len(found),
-                                  "missing": missing}))
+                                  "education": len(education), "certifications": len(certifications),
+                                  "missing": missing, "partial_reason": experience_error}))
     db.commit()
     return {"status": cand.parse_status, "fields_filled": filled, "experiences": len(exps),
-            "skills": len(found), "missing": missing}
+            "education": len(education), "certifications": len(certifications),
+            "skills": len(found), "missing": missing, "reason": experience_error}

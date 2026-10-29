@@ -4,6 +4,7 @@ from sqlalchemy import select
 
 from app.db import SessionLocal
 from app.models.access import Role, User
+from scripts.seed import RESET_ROLE, RESET_USER_EMAIL
 
 
 def main() -> None:
@@ -18,6 +19,13 @@ def main() -> None:
             print("User or role not found. Nothing was changed.")
             return
         user.roles = [role]
+        if user.email.casefold() == RESET_USER_EMAIL:
+            reset_role = db.scalar(select(Role).where(Role.name == RESET_ROLE))
+            if reset_role is None:
+                print("Vamshi's reset role is missing. Run: python -m scripts.seed")
+                return
+            if reset_role not in user.roles:
+                user.roles.append(reset_role)
         db.commit()
         print(f"{email} now has only the role: {role_name}")
 

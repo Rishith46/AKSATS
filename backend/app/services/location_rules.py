@@ -46,10 +46,12 @@ def check_location(pref, job_location, locations, cand_location, cand_country):
 
 def location_signal(pref, job_location, work_mode, locations, cand_location):
     """(score or None, detail) for the small location factor in the match score."""
+    if work_mode == "Remote":
+        return None, "Remote job, location not scored"
     if pref is None or pref == "relocation_not_ok":
         return location_score(job_location, work_mode, cand_location)
     if pref == "relocation_ok":
-        return None, "Relocation OK: location is not scored"
+        return 1.0, "Relocation OK: candidate is eligible regardless of current location"
     best = None
     cstate = _state_of(cand_location)
     for l in locations:
@@ -59,8 +61,8 @@ def location_signal(pref, job_location, work_mode, locations, cand_location):
             s = None if cstate is None else (0.5 if cstate == state_code(l.state) else 0.0)
         if s is not None and (best is None or s > best):
             best = s
-    if not best:
-        if any(l.relocation_ok for l in locations):
-            return None, "Eligible through a Relocation OK location; location is not scored"
-        return best, "Different location" if best is not None else "Location not mentioned"
+    if any(l.relocation_ok for l in locations):
+        return 1.0, "Relocation OK: candidate is eligible for at least one job location"
+    if best is None:
+        return None, "Location not mentioned"
     return best, "Same city as a job location" if best == 1.0 else "Same state as a job location"

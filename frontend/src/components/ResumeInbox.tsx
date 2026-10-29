@@ -97,6 +97,11 @@ export default function ResumeInbox({ token, onSessionEnd }: { token: string; on
   return (
     <section className="glass w-full p-6 sm:p-8">
       <p className="text-xs tracking-[0.4em] uppercase text-[var(--silver-600)]">Resume Inbox</p>
+      <p className="mt-2 text-sm text-[var(--silver-600)]" role="status">
+        {data?.email_polling
+          ? "Gmail polling is enabled. Confirmed resume attachments are added and parsed automatically."
+          : "Gmail polling is not configured. Configure Google OAuth in the backend to import application resumes automatically."}
+      </p>
 
       <div
         className={"dropzone" + (dragging ? " active" : "")}
@@ -168,12 +173,13 @@ export default function ResumeInbox({ token, onSessionEnd }: { token: string; on
             <div className="table-wrap mt-3">
               <table className="list">
                 <thead>
-                  <tr><th>File</th><th>Status</th><th>Note</th><th>Received</th></tr>
+                  <tr><th>File</th><th>Source</th><th>Status</th><th>Note</th><th>Received</th></tr>
                 </thead>
                 <tbody>
                   {data.items.map((r) => (
                     <tr key={r.id}>
                       <td className="font-semibold">{r.filename}</td>
+                      <td>{r.source === "email" ? "Email" : "Upload"}</td>
                       <td><span className={tone(r.status)}>{r.status}</span></td>
                       <td className="text-sm text-[var(--silver-600)]">{r.issues?.reason ?? ""}</td>
                       <td className="whitespace-nowrap">{fmtTime(r.received_at)}</td>

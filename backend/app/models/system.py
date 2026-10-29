@@ -52,6 +52,9 @@ class SavedSearch(Base):
 
 class ResumeIngestion(Base):
     __tablename__ = "resume_ingestions"
+    __table_args__ = (
+        UniqueConstraint("email_message_id", name="uq_resume_ingestion_email_attachment"),
+    )
     id: Mapped[int] = mapped_column(primary_key=True)
     source: Mapped[str] = mapped_column(String(20))  # upload / email
     email_message_id: Mapped[str | None] = mapped_column(String(500))
@@ -65,6 +68,13 @@ class ResumeIngestion(Base):
     duplicate_of_candidate_id: Mapped[int | None] = mapped_column(ForeignKey("candidates.id", ondelete="SET NULL"))
     received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     processed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class GmailScannedMessage(Base):
+    __tablename__ = "gmail_scanned_messages"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    gmail_message_id: Mapped[str] = mapped_column(String(500), unique=True)
+    scanned_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class MatchConfig(Base):

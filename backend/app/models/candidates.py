@@ -29,6 +29,7 @@ class Skill(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(150), unique=True)
     category: Mapped[str | None] = mapped_column(String(100))
+    needs_review: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
 
 
 class SkillAlias(Base):
@@ -142,6 +143,7 @@ class CandidateDocument(Base):
     mime_type: Mapped[str | None] = mapped_column(String(150))
     size_bytes: Mapped[int | None] = mapped_column(BigInteger)
     sha256: Mapped[str | None] = mapped_column(String(64), index=True)
+    extracted_text: Mapped[str | None] = mapped_column(Text)
     version_no: Mapped[int | None] = mapped_column(Integer)
     is_current: Mapped[bool] = mapped_column(Boolean, server_default="false")
     uploaded_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))

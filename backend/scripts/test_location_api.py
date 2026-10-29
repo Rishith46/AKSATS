@@ -77,7 +77,10 @@ try:
     ranked, excl = result(j1)
     check("OK: Texas, Oklahoma and unknown are all eligible", {TX, OK, NONE} <= set(ranked), str(list(ranked)))
     check("OK: a candidate outside the US is excluded", IND in excl and excl[IND]["kind"] == "location" and "outside the US" in excl[IND]["reason"], str(excl.get(IND)))
-    check("OK: location is not scored", ranked[OK]["signals"]["location"]["score"] is None, str(ranked[OK]["signals"]["location"]))
+    check("OK: location signal reflects relocation eligibility",
+          ranked[OK]["signals"]["location"]["score"] == 1.0
+          and "Relocation OK" in ranked[OK]["signals"]["location"]["detail"],
+          str(ranked[OK]["signals"]["location"]))
 
     # ---------- Relocation Not OK ----------
     r = new_job(location="Dallas, TX", work_mode="Onsite", location_preference="relocation_not_ok")

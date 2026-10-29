@@ -19,7 +19,9 @@ TEAM = ["rishith@allknownservices.com", "john@allknownservices.com", "vamshi@all
 
 UNIT = ["test_geo", "test_visa", "test_visa_schema", "test_edit_schema", "test_experience_edit",
         "test_matching", "test_titles", "test_matcher_v2", "test_location_rules", "test_jd",
-        "test_split", "test_bodies", "test_interns", "test_skill_history", "test_skill_refresh"]
+        "test_split", "test_bodies", "test_interns", "test_skill_history", "test_skill_refresh",
+        "test_ats_reset_access", "test_dashboard_summary", "test_candidate_status_schema",
+        "test_candidate_status_history", "test_candidate_archive_listing"]
 API = ["test_edit_api", "test_edit_api2", "test_location_api"]
 
 results = []
@@ -70,7 +72,7 @@ else:
 
 after = counts()
 
-# equal access: every team member holds exactly the full permission set
+# All team accounts share the same permissions except the Vamshi-only ATS reset grant.
 access = []
 with SessionLocal() as db:
     all_perms = {p.code for p in db.scalars(select(Permission)).all()}
@@ -80,8 +82,15 @@ with SessionLocal() as db:
             access.append((email, False, "no such user"))
             continue
         have = {p.code for r in u.roles for p in r.permissions}
-        access.append((email, have == all_perms and u.is_active,
+        reset_ok = ("ats.reset" in have) == (email == "vamshi@allknownservices.com")
+        access.append((email, have - {"ats.reset"} == all_perms - {"ats.reset"} and reset_ok and u.is_active,
                        f"{len(have)} of {len(all_perms)} permissions, designation {u.designation}, active {u.is_active}"))
+    reset_users = db.scalars(select(User)).all()
+    unauthorized_reset_users = [
+        user.email for user in reset_users
+        if user.email.casefold() != "vamshi@allknownservices.com"
+        and any(permission.code == "ats.reset" for role in user.roles for permission in role.permissions)
+    ]
 
 # the backend must not decide anything by role name
 ALLOWED = {Path("app/models/access.py"), Path("app/routers/auth.py"), Path("app/deps.py")}
@@ -104,6 +113,8 @@ for n, ok, msg in results:
 print("\n=== EQUAL ACCESS (database) ===")
 for email, ok, msg in access:
     print(f"{'PASS' if ok else 'FAIL'}  {email}: {msg}")
+print(f"{'PASS' if not unauthorized_reset_users else 'FAIL'}  ats.reset restricted to Vamshi"
+      + ("" if not unauthorized_reset_users else f": {', '.join(unauthorized_reset_users)}"))
 print("\n=== ROLE NAMES IN BACKEND LOGIC ===")
 print("PASS  none found outside models, login and permission loading" if not hits else "FAIL  " + "\n      ".join(hits))
 print("\n=== DATABASE STATE ===")
@@ -114,6 +125,8 @@ print("\n=== MIGRATIONS ===")
 print(f"{'PASS' if head.split()[0:1] == cur.split()[0:1] and head else 'CHECK'}  head: {head.splitlines()[0] if head else '?'} | current: {cur.splitlines()[-1] if cur else '?'}")
 
 failed = [n for n, ok, _ in results if not ok] + [e for e, ok, _ in access if not ok] + hits
+if unauthorized_reset_users:
+    failed.append("unauthorized ats.reset assignments")
 failed += [k for k in before if before[k] != after[k]]
 print(f"\n{len(results) - sum(1 for _, ok, _ in results if not ok)} of {len(results)} test scripts passed.")
 sys.exit(1 if failed else 0)

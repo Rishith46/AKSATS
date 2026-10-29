@@ -1,10 +1,13 @@
 import logging
 import threading
+import time
 
 from sqlalchemy import select, update
 
+from app.config import settings
 from app.db import SessionLocal
 from app.models.system import ResumeIngestion
+from app.services.gmail_inbox import is_configured, poll_gmail
 from app.services.process_inbox import process_ingestion
 
 log = logging.getLogger("aks_ats.worker")
@@ -28,8 +31,21 @@ def recover() -> None:
 
 def _loop() -> None:
     log.info("Inbox worker started")
+    next_gmail_poll = 0.0
+    if not is_configured():
+        log.info("Gmail resume polling is disabled; configure Gmail OAuth settings to enable it")
     while not _stop.is_set():
         try:
+            now = time.monotonic()
+            if is_configured() and now >= next_gmail_poll:
+                try:
+                    with SessionLocal() as db:
+                        queued = poll_gmail(db)
+                    if queued:
+                        log.info("Queued %s resume attachment(s) from Gmail", queued)
+                except Exception:
+                    log.exception("Gmail inbox polling failed; it will retry")
+                next_gmail_poll = time.monotonic() + max(30, settings.gmail_poll_seconds)
             with SessionLocal() as db:
                 rid = db.scalar(select(ResumeIngestion.id)
                                 .where(ResumeIngestion.status == "Received")

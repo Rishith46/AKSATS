@@ -6,8 +6,8 @@ from sqlalchemy.orm import Session
 
 from app.deps import get_db, require_permission
 from app.models.access import User
-from app.models.candidates import (Candidate, CandidateExperience, CandidateSkill, Skill,
-                                   SkillAlias)
+from app.models.candidates import (Candidate, CandidateExperience, CandidateNote,
+                                   CandidateSkill, Skill, SkillAlias)
 from app.models.system import ActivityLog
 from app.schemas.candidates import CandidateCreate, CandidateOut, CandidateUpdate
 from app.visa import VISA_VALUES
@@ -55,14 +55,17 @@ def _like(s: str) -> str:
 
 
 @router.get("", response_model=list[CandidateOut])
-def list_candidates(include_archived: bool = False, limit: int = 50, offset: int = 0,
+def list_candidates(include_archived: bool = False, archived_only: bool = False,
+                    limit: int = 50, offset: int = 0,
                     q: str | None = None, location: str | None = None, title: str | None = None,
                     skill: list[str] = Query(default=[]), min_experience: float | None = None,
                     visa: str | None = None,
                     db: Session = Depends(get_db),
                     user: User = Depends(require_permission("candidate.view"))):
     stmt = select(Candidate).order_by(Candidate.id.desc())
-    if not include_archived:
+    if archived_only:
+        stmt = stmt.where(Candidate.archived_at.is_not(None))
+    elif not include_archived:
         stmt = stmt.where(Candidate.archived_at.is_(None))
     if q and q.strip():
         p = _like(q)
@@ -106,6 +109,7 @@ def update_candidate(cid: int, body: CandidateUpdate, db: Session = Depends(get_
                      user: User = Depends(require_permission("candidate.edit"))):
     c = _get(db, cid)
     changes = body.model_dump(exclude_unset=True)
+    old_status = c.status
     loc_args = {k: changes.pop(k) for k in ("city", "state", "country") if k in changes}
     if loc_args:
         try:
@@ -123,6 +127,18 @@ def update_candidate(cid: int, body: CandidateUpdate, db: Session = Depends(get_
     c.field_sources = sources
     db.flush()
     _log(db, user, "candidate.edited", c.id, old=old, new=_snap(c, fields))
+    if "status" in changes and c.status != old_status:
+        changed_at = datetime.now(timezone.utc)
+        db.add(CandidateNote(
+            candidate_id=c.id,
+            author_id=user.id,
+            body=(
+                f"Status changed from {old_status} to {c.status}.\n"
+                f"Changed by: {user.full_name} ({user.email})\n"
+                f"Changed at: {changed_at.strftime('%Y-%m-%d %H:%M:%S UTC')}"
+            ),
+            created_at=changed_at,
+        ))
     db.commit()
     db.refresh(c)
     return c

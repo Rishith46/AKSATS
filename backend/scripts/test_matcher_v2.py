@@ -49,10 +49,12 @@ assert recommend(None, 0, False, "", [], [])[0] == "Unable to determine"
 lvl, why = recommend(95, 80, True, "5 years is below", [], [])
 assert why == ["Experience: 5 years is below"]
 
-# not-scored signals are listed, not counted as zero
+# recent-role lexical comparison contributes when experience details are available
 sc, cov, br = combine(DEFAULT_WEIGHTS, {"required_skills": (1.0, ""), "preferred_skills": (None, ""),
-                                         "relevant_experience": (1.0, ""), "job_title": (0.0, ""),
+                                         "relevant_experience": (1.0, ""),
+                                         "recent_roles": (0.5, "lexical comparison"),
+                                         "job_title": (0.0, ""),
                                          "location": (None, ""), "visa": (None, "")})
-assert br["recent_roles"]["score"] is None and "embeddings" in br["recent_roles"]["detail"]
-assert sc == round(100 * (40 + 20 + 0) / (40 + 20 + 5)) and cov == 65.0
+assert br["recent_roles"]["score"] == 0.5
+assert sc == round(100 * (40 + 20 + 7.5) / (40 + 20 + 15 + 5)) and cov == 80.0
 print("matcher v2 checks passed")

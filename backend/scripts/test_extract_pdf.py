@@ -32,3 +32,10 @@ with tempfile.TemporaryDirectory() as d:
         print("Blank PDF: NOT rejected (unexpected)")
     except ExtractionError as e:
         print("Blank PDF rejected:", e)
+
+    short = Path(d) / "short.pdf"
+    c = canvas.Canvas(str(short), pagesize=letter)
+    c.drawString(72, 750, "Short resume")
+    c.save()
+    assert extract_text(short) == "Short resume"
+    print("Short PDF accepted")

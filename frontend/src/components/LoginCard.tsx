@@ -1,24 +1,31 @@
 "use client";
 
 import { useState } from "react";
+import Image from "next/image";
 import DocLoader from "@/components/DocLoader";
 import { fetchMe, login, type Me } from "@/lib/api";
 
 export default function LoginCard({ onSignedIn }: { onSignedIn: (token: string, me: Me) => void }) {
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [showPassword, setShowPassword] = useState(false);
 
-  async function onSubmit(e: React.FormEvent) {
+  async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     if (busy) return;
     setError(null);
+    const formData = new FormData(e.currentTarget);
+    const email = String(formData.get("email") ?? "").trim();
+    const password = String(formData.get("password") ?? "");
+    if (!email || !password) {
+      setError("Enter your email and password");
+      return;
+    }
+
     setBusy(true);
     try {
       const token = await login(email, password);
       const me = await fetchMe(token);
-      setPassword("");
       onSignedIn(token, me);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong");
@@ -29,10 +36,15 @@ export default function LoginCard({ onSignedIn }: { onSignedIn: (token: string, 
 
   return (
     <section className="glass w-full max-w-md p-10">
-      <p className="rise text-center text-xs tracking-[0.4em] uppercase text-[var(--silver-600)]">
-        All Known Services
-      </p>
-      <h1 className="title-solid mt-3 text-center text-4xl font-bold tracking-tight">
+      <Image
+        className="company-logo-login"
+        src="/company-logo.png"
+        alt="All Known Services"
+        width={512}
+        height={127}
+        priority
+      />
+      <h1 className="title-solid mt-4 text-center text-3xl font-bold tracking-tight">
         Applicant Tracking
       </h1>
 
@@ -46,26 +58,35 @@ export default function LoginCard({ onSignedIn }: { onSignedIn: (token: string, 
             <span>Email</span>
             <input
               type="email"
+              name="email"
               autoComplete="username"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
               placeholder="you@allknownservices.com"
               required
             />
           </label>
           <label className="field">
             <span>Password</span>
-            <input
-              type="password"
-              autoComplete="current-password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder="Your password"
-              required
-            />
+            <div className="password-control">
+              <input
+                type={showPassword ? "text" : "password"}
+                name="password"
+                autoComplete="current-password"
+                placeholder="Your password"
+                required
+              />
+              <button
+                type="button"
+                className="password-toggle"
+                aria-label={showPassword ? "Hide password" : "Show password"}
+                aria-pressed={showPassword}
+                onClick={() => setShowPassword((visible) => !visible)}
+              >
+                {showPassword ? "Hide" : "Show"}
+              </button>
+            </div>
           </label>
           <p className="form-error" role="alert" aria-live="polite">{error ?? "\u00A0"}</p>
-          <button type="submit" className="btn-dark w-full" disabled={!email || !password}>
+          <button type="submit" className="btn-dark w-full">
             Sign in
           </button>
         </form>

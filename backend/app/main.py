@@ -5,8 +5,9 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 
+from app.config import settings
 from app.db import engine
-from app.routers import auth, candidate_delete, candidates, documents, inbox, notes, parsing, profile, jobs, matching, jd, meta, candidate_edit
+from app.routers import auth, candidate_delete, candidates, documents, inbox, notes, parsing, profile, jobs, matching, jd, meta, candidate_edit, dashboard
 from app.services import worker
 
 logging.basicConfig(level=logging.INFO)
@@ -23,7 +24,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="ALL KNOWN SERVICES ATS", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_origins=settings.cors_origin_list,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -40,6 +41,7 @@ app.include_router(matching.router)
 app.include_router(jd.router)
 app.include_router(meta.router)
 app.include_router(candidate_edit.router)
+app.include_router(dashboard.router)
 
 
 @app.get("/health")
