@@ -85,6 +85,14 @@ Users with `candidate.delete` can permanently delete a candidate and related res
 and submission records. Users with `job.delete` can permanently delete a job and its
 related submissions and interviews. Both actions require confirmation in the UI.
 
+## Candidate supporting documents
+
+On a candidate profile, users with `document.upload` can store five supporting PDFs in fixed
+slots: Driver's License, Visa, and three recruiter-named documents. Each slot accepts one PDF
+up to 20 MB; a later upload to the same slot replaces the prior file. Other document formats
+are rejected for these slots. Run `alembic upgrade head` from `backend` to add the slot and
+display-name columns before starting the updated backend.
+
 The Candidates screen has separate **Candidates** and **Archived** views. Users with
 `candidate.archive` can move a candidate to Archived and restore them later. Users with
 `candidate.edit` can open Modify directly from a candidate row, and users with

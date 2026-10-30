@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import CandidateNotes from "@/components/CandidateNotes";
 import CandidateEditForm from "@/components/CandidateEditForm";
+import CandidateSupportingDocuments from "@/components/CandidateSupportingDocuments";
 import DocLoader from "@/components/DocLoader";
 import {
   getATSResumeExport, getCandidateDocument, getProfile, reparseResume, SessionError, type Profile,
@@ -35,11 +36,12 @@ function Field({ label, value, source }: { label: string; value: string | null; 
 }
 
 export default function CandidateProfile({
-  token, id, canEdit, startEditing = false, onBack, onSessionEnd,
+  token, id, canEdit, canUploadDocuments, startEditing = false, onBack, onSessionEnd,
 }: {
   token: string;
   id: number;
   canEdit: boolean;
+  canUploadDocuments: boolean;
   startEditing?: boolean;
   onBack: () => void;
   onSessionEnd: () => void;
@@ -62,6 +64,23 @@ export default function CandidateProfile({
       if (url) URL.revokeObjectURL(url);
     };
   }, [pdfPreview?.url]);
+
+  function updateSupportingDocument(document: Profile["documents"][number]) {
+    setP((current) => current ? {
+      ...current,
+      documents: [
+        ...current.documents.filter((item) => item.slot !== document.slot),
+        document,
+      ],
+    } : current);
+  }
+
+  function removeSupportingDocument(documentId: number) {
+    setP((current) => current ? {
+      ...current,
+      documents: current.documents.filter((document) => document.id !== documentId),
+    } : current);
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -318,16 +337,28 @@ export default function CandidateProfile({
           <h2 className="section-title">Notes</h2>
           <CandidateNotes token={token} id={p.id} onSessionEnd={onSessionEnd} />
 
-          <h2 className="section-title">Documents</h2>
+          <h2 className="section-title">DL, Visa &amp; other documents</h2>
+          <CandidateSupportingDocuments
+            token={token}
+            candidateId={p.id}
+            documents={p.documents}
+            canUpload={canUploadDocuments}
+            onUpload={updateSupportingDocument}
+            onRemove={removeSupportingDocument}
+            onOpen={(documentId, filename) => void openOriginal(documentId, filename)}
+            onSessionEnd={onSessionEnd}
+          />
+
+          <h2 className="section-title">Resume and other documents</h2>
           {parseMessage && <p className="mb-3 text-sm" role="status">{parseMessage}</p>}
-          {p.documents.length === 0 ? (
+          {p.documents.filter((document) => !document.slot).length === 0 ? (
             <p className="text-sm text-[var(--silver-600)]">No documents.</p>
           ) : (
             <div className="table-wrap">
               <table className="list">
                 <thead><tr><th>File</th><th>Type</th><th>Version</th><th>Uploaded</th></tr></thead>
                 <tbody>
-                  {p.documents.map((d) => (
+                  {p.documents.filter((document) => !document.slot).map((d) => (
                     <tr key={d.id}>
                       <td className="font-semibold">
                         {d.filename}
@@ -377,7 +408,7 @@ export default function CandidateProfile({
           {pdfPreview && (
             <div className="match-card mt-4">
               <div className="flex items-center justify-between gap-3">
-                <h3 className="font-semibold">Original resume: {pdfPreview.filename}</h3>
+                <h3 className="font-semibold">PDF preview: {pdfPreview.filename}</h3>
                 <button className="btn-ghost" onClick={() => setPdfPreview(null)}>Close preview</button>
               </div>
               <iframe className="mt-3 h-[75vh] w-full rounded-lg border border-[var(--silver-200)]"

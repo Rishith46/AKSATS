@@ -21,7 +21,8 @@ UNIT = ["test_geo", "test_visa", "test_visa_schema", "test_edit_schema", "test_e
         "test_matching", "test_titles", "test_matcher_v2", "test_location_rules", "test_jd",
         "test_split", "test_bodies", "test_interns", "test_skill_history", "test_skill_refresh",
         "test_ats_reset_access", "test_dashboard_summary", "test_candidate_status_schema",
-        "test_candidate_status_history", "test_candidate_archive_listing"]
+        "test_candidate_status_history", "test_candidate_archive_listing",
+        "test_candidate_supporting_documents"]
 API = ["test_edit_api", "test_edit_api2", "test_location_api"]
 
 results = []

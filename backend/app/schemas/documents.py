@@ -17,3 +17,5 @@ class DocumentOut(BaseModel):
     is_current: bool
     uploaded_by: int | None
     uploaded_at: datetime
+    slot: str | None = None
+    display_name: str | None = None

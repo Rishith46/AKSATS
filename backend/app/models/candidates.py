@@ -134,6 +134,7 @@ class CandidateDocument(Base):
     __table_args__ = (
         Index("uq_candidate_current_resume", "candidate_id", unique=True,
               postgresql_where=text("is_current AND kind = 'resume'")),
+        UniqueConstraint("candidate_id", "slot", name="uq_candidate_document_slot"),
     )
     id: Mapped[int] = mapped_column(primary_key=True)
     candidate_id: Mapped[int] = mapped_column(ForeignKey("candidates.id", ondelete="CASCADE"), index=True)
@@ -148,6 +149,8 @@ class CandidateDocument(Base):
     is_current: Mapped[bool] = mapped_column(Boolean, server_default="false")
     uploaded_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
     uploaded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    slot: Mapped[str | None] = mapped_column(String(30))
+    display_name: Mapped[str | None] = mapped_column(String(100))
 
 
 class CandidateNote(Base):

@@ -247,6 +247,7 @@ export default function AppShell() {
         ) : openId !== null ? (
           <CandidateProfile key={`p${openId}`} token={session.token} id={openId}
             canEdit={session.me.permissions.includes("candidate.edit")}
+            canUploadDocuments={session.me.permissions.includes("document.upload")}
             startEditing={startEditingProfile} onBack={closeProfile} onSessionEnd={endSession} />
         ) : (
           <CandidateList key="c" token={session.token} onSessionEnd={endSession}

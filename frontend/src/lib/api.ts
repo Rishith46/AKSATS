@@ -253,8 +253,77 @@ export type Profile = {
     is_current: boolean;
     uploaded_at: string;
     extracted_text: string | null;
+    slot: string | null;
+    display_name: string | null;
   }[];
 };
+
+export type SupportingDocumentSlot =
+  | "drivers_license"
+  | "visa"
+  | "other_1"
+  | "other_2"
+  | "other_3";
+
+export async function uploadSupportingDocument(
+  token: string,
+  candidateId: number,
+  slot: SupportingDocumentSlot,
+  file: File,
+  displayName?: string,
+): Promise<Profile["documents"][number]> {
+  const body = new FormData();
+  body.append("file", file);
+  body.append("slot", slot);
+  if (displayName !== undefined) body.append("display_name", displayName);
+  let res: Response;
+  try {
+    res = await fetch(`${API_URL}/candidates/${candidateId}/documents/slots`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+      body,
+    });
+  } catch {
+    throw new Error("Cannot reach the server");
+  }
+  if (res.status === 401) throw new SessionError("Your session has expired");
+  if (res.status === 403) throw new Error("You do not have permission to upload candidate documents");
+  if (!res.ok) {
+    let detail = "Could not upload the PDF";
+    try {
+      const response = await res.json();
+      if (typeof response?.detail === "string") detail = response.detail;
+    } catch {}
+    throw new Error(detail);
+  }
+  return (await res.json()) as Profile["documents"][number];
+}
+
+export async function deleteSupportingDocument(
+  token: string,
+  candidateId: number,
+  documentId: number,
+): Promise<void> {
+  let res: Response;
+  try {
+    res = await fetch(`${API_URL}/candidates/${candidateId}/documents/${documentId}`, {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${token}` },
+    });
+  } catch {
+    throw new Error("Cannot reach the server");
+  }
+  if (res.status === 401) throw new SessionError("Your session has expired");
+  if (res.status === 403) throw new Error("You do not have permission to remove candidate documents");
+  if (!res.ok) {
+    let detail = "Could not remove the document";
+    try {
+      const response = await res.json();
+      if (typeof response?.detail === "string") detail = response.detail;
+    } catch {}
+    throw new Error(detail);
+  }
+}
 
 export async function getProfile(token: string, id: number): Promise<Profile> {
   let res: Response;

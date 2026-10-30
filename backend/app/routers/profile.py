@@ -90,6 +90,7 @@ def get_profile(cid: int, db: Session = Depends(get_db),
             "id": d.id, "kind": d.kind, "filename": d.original_filename,
             "version_no": d.version_no, "is_current": d.is_current,
             "uploaded_at": d.uploaded_at, "extracted_text": d.extracted_text,
+            "slot": d.slot, "display_name": d.display_name,
         } for d in docs],
     }
 

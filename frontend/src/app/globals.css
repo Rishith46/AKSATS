@@ -211,6 +211,10 @@ table.list tbody tr:hover { background: rgba(236,238,240,0.7); }
 }
 .candidate-action-item:hover:not(:disabled), .candidate-action-item:focus-visible { background: var(--silver-100); outline: none; }
 .candidate-action-item:disabled { opacity: .55; cursor: wait; }
+.supporting-document-card {
+  padding: 1rem; border: 1px solid var(--silver-200); border-radius: 14px;
+  background: rgba(255,255,255,.75);
+}
 .row-in { opacity: 0; transform: translateY(8px); animation: rowin .5s cubic-bezier(.2,.7,.2,1) forwards; }
 @keyframes rowin { to { opacity: 1; transform: none; } }
 
